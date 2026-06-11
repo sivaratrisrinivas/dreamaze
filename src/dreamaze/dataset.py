@@ -1,8 +1,13 @@
+import hashlib
+import json
+import struct
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from random import Random
-from typing import Iterable, Mapping, Protocol, Sequence
+from typing import Any, Iterable, Mapping, Protocol, Sequence
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from dreamaze.validation import validate_solution_mask
 
@@ -178,6 +183,25 @@ class DatasetSplits:
     test: DatasetSplit
 
 
+@dataclass(frozen=True)
+class DatasetArtifactShard:
+    split: DatasetSplitName
+    name: str
+    example_count: int
+    seeds: tuple[int, ...]
+    sha256: str
+
+
+@dataclass(frozen=True)
+class DatasetArtifactManifest:
+    status: str
+    config: Mapping[str, Any]
+    split_names: tuple[str, ...]
+    split_counts: Mapping[str, int]
+    seeds: Mapping[str, tuple[int, ...]]
+    shards: tuple[DatasetArtifactShard, ...]
+
+
 class DatasetGenerationError(RuntimeError):
     pass
 
@@ -243,6 +267,327 @@ def build_dataset_splits(
             training_example_builder=training_example_builder,
         ),
     )
+
+
+def write_dataset_artifacts(
+    *,
+    config: DatasetConfig,
+    output_dir: str | Path,
+    training_example_builder: TrainingExampleBuilder = build_training_example,
+) -> DatasetArtifactManifest:
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    completed_manifest = _load_completed_manifest_if_reusable(
+        path=output_path / "manifest.json", config=config, output_dir=output_path
+    )
+    if completed_manifest is not None:
+        return completed_manifest
+
+    splits = build_dataset_splits(
+        config=config, training_example_builder=training_example_builder
+    )
+    if config.write_preview_images:
+        _write_preview_images(output_dir=output_path / "previews", splits=splits)
+
+    artifact_shards: list[DatasetArtifactShard] = []
+    for split in (splits.train, splits.validation, splits.test):
+        for shard_index, examples in enumerate(
+            _chunk_training_examples(split.examples, config.shard_size)
+        ):
+            shard_name = f"{split.name.value}-{shard_index:05d}.npz"
+            shard_path = output_path / shard_name
+            _write_dataset_artifact_shard(path=shard_path, examples=examples)
+            artifact_shards.append(
+                DatasetArtifactShard(
+                    split=split.name,
+                    name=shard_name,
+                    example_count=len(examples),
+                    seeds=tuple(example.seed for example in examples),
+                    sha256=_sha256_file(shard_path),
+                )
+            )
+
+    manifest = DatasetArtifactManifest(
+        status="complete",
+        config=_dataset_config_manifest(config),
+        split_names=tuple(split.value for split in DatasetSplitName),
+        split_counts={
+            splits.train.name.value: len(splits.train.examples),
+            splits.validation.name.value: len(splits.validation.examples),
+            splits.test.name.value: len(splits.test.examples),
+        },
+        seeds={
+            splits.train.name.value: tuple(
+                example.seed for example in splits.train.examples
+            ),
+            splits.validation.name.value: tuple(
+                example.seed for example in splits.validation.examples
+            ),
+            splits.test.name.value: tuple(
+                example.seed for example in splits.test.examples
+            ),
+        },
+        shards=tuple(artifact_shards),
+    )
+    _write_manifest(output_path / "manifest.json", manifest)
+    return manifest
+
+
+def load_dataset_artifact_shard(path: str | Path) -> Mapping[str, Any]:
+    with ZipFile(Path(path), "r") as archive:
+        return json.loads(archive.read("arrays.json").decode("utf-8"))
+
+
+def load_dataset_artifact_manifest(path: str | Path) -> DatasetArtifactManifest:
+    payload = json.loads(Path(path).read_text())
+    return DatasetArtifactManifest(
+        status=payload["status"],
+        config=payload["config"],
+        split_names=tuple(payload["split_names"]),
+        split_counts=payload["split_counts"],
+        seeds={split: tuple(seeds) for split, seeds in payload["seeds"].items()},
+        shards=tuple(
+            DatasetArtifactShard(
+                split=DatasetSplitName(shard["split"]),
+                name=shard["name"],
+                example_count=shard["example_count"],
+                seeds=tuple(shard["seeds"]),
+                sha256=shard["sha256"],
+            )
+            for shard in payload["shards"]
+        ),
+    )
+
+
+def _chunk_training_examples(
+    examples: Sequence[TrainingExample], shard_size: int
+) -> Iterable[tuple[TrainingExample, ...]]:
+    if shard_size < 1:
+        raise ValueError("Dataset Artifact shard size must be positive")
+
+    for start in range(0, len(examples), shard_size):
+        yield tuple(examples[start : start + shard_size])
+
+
+def _load_completed_manifest_if_reusable(
+    *, path: Path, config: DatasetConfig, output_dir: Path
+) -> DatasetArtifactManifest | None:
+    if not path.exists():
+        return None
+
+    try:
+        manifest_payload = json.loads(path.read_text())
+    except json.JSONDecodeError as error:
+        raise DatasetGenerationError(
+            f"Cannot resume Dataset Artifact build from invalid manifest: {path}"
+        ) from error
+
+    status = manifest_payload.get("status")
+    if status != "complete":
+        raise DatasetGenerationError(
+            f"Found incomplete Dataset Artifact build in {path}; remove it or "
+            "resume from a complete manifest"
+        )
+
+    manifest = load_dataset_artifact_manifest(path)
+    if manifest.config != _dataset_config_manifest(config):
+        return None
+
+    for shard in manifest.shards:
+        shard_path = output_dir / shard.name
+        if not shard_path.exists():
+            raise DatasetGenerationError(
+                f"Completed manifest references missing Dataset Artifact shard: "
+                f"{shard.name}"
+            )
+        if _sha256_file(shard_path) != shard.sha256:
+            raise DatasetGenerationError(
+                f"Completed manifest integrity check failed for Dataset Artifact "
+                f"shard: {shard.name}"
+            )
+
+    return manifest
+
+
+def _write_dataset_artifact_shard(
+    *, path: Path, examples: Sequence[TrainingExample]
+) -> None:
+    payload = _dataset_artifact_payload(examples)
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "arrays.json",
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        )
+        archive.writestr(
+            "maze_condition.npy",
+            _npy_bytes(payload["maze_condition"], descr="|u1"),
+        )
+        archive.writestr(
+            "solution_mask.npy",
+            _npy_bytes(payload["solution_mask"], descr="|u1"),
+        )
+        archive.writestr(
+            "start_cell.npy",
+            _npy_bytes(payload["start_cell"], descr="<i8"),
+        )
+        archive.writestr(
+            "goal_cell.npy",
+            _npy_bytes(payload["goal_cell"], descr="<i8"),
+        )
+        archive.writestr("seed.npy", _npy_bytes(payload["seed"], descr="<i8"))
+
+
+def _write_preview_images(*, output_dir: Path, splits: DatasetSplits) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for split in (splits.train, splits.validation, splits.test):
+        for example in split.examples:
+            preview_path = output_dir / f"{split.name.value}-{example.seed:06d}.pgm"
+            preview_path.write_text(_preview_image_pgm(example))
+
+
+def _preview_image_pgm(example: TrainingExample) -> str:
+    rendered_maze = example.maze_condition.rendered_maze
+    solution_mask = example.training_label
+    rows = len(rendered_maze)
+    columns = len(rendered_maze[0])
+    pixels: list[str] = []
+
+    for row_index, row in enumerate(rendered_maze):
+        values: list[str] = []
+        for column_index, is_open in enumerate(row):
+            if solution_mask[row_index][column_index]:
+                values.append("180")
+            elif is_open:
+                values.append("255")
+            else:
+                values.append("0")
+        pixels.append(" ".join(values))
+
+    return f"P2\n{columns} {rows}\n255\n" + "\n".join(pixels) + "\n"
+
+
+def _dataset_artifact_payload(examples: Sequence[TrainingExample]) -> Mapping[str, Any]:
+    return {
+        "maze_condition": [
+            _bool_grid_to_array(example.maze_condition.rendered_maze)
+            for example in examples
+        ],
+        "solution_mask": [
+            _bool_grid_to_array(example.training_label) for example in examples
+        ],
+        "start_cell": [list(example.start_cell) for example in examples],
+        "goal_cell": [list(example.goal_cell) for example in examples],
+        "maze_family": [example.maze_family.value for example in examples],
+        "split": [example.split for example in examples],
+        "seed": [example.seed for example in examples],
+        "metadata": _metadata_arrays(examples),
+    }
+
+
+def _metadata_arrays(examples: Sequence[TrainingExample]) -> Mapping[str, list[Any]]:
+    keys = sorted({key for example in examples for key in example.metadata})
+    return {key: [example.metadata.get(key) for example in examples] for key in keys}
+
+
+def _bool_grid_to_array(grid: BoolGrid) -> list[list[int]]:
+    return [[1 if cell else 0 for cell in row] for row in grid]
+
+
+def _npy_bytes(array: Any, *, descr: str) -> bytes:
+    shape = _array_shape(array)
+    flattened = list(_flatten_array(array))
+    header = _npy_header(descr=descr, shape=shape)
+
+    if descr == "|u1":
+        data = bytes(flattened)
+    elif descr == "<i8":
+        data = b"".join(struct.pack("<q", value) for value in flattened)
+    else:
+        raise ValueError(f"Unsupported Dataset Artifact array dtype: {descr}")
+
+    return header + data
+
+
+def _npy_header(*, descr: str, shape: tuple[int, ...]) -> bytes:
+    shape_repr = f"({shape[0]},)" if len(shape) == 1 else repr(shape)
+    header = (
+        f"{{'descr': '{descr}', 'fortran_order': False, "
+        f"'shape': {shape_repr}, }}"
+    )
+    header_length = len(header) + 1
+    padding = 16 - ((10 + header_length) % 16)
+    header_bytes = (header + (" " * padding) + "\n").encode("ascii")
+    return b"\x93NUMPY\x01\x00" + struct.pack("<H", len(header_bytes)) + header_bytes
+
+
+def _array_shape(array: Any) -> tuple[int, ...]:
+    if not isinstance(array, list):
+        return ()
+    if not array:
+        return (0,)
+    return (len(array),) + _array_shape(array[0])
+
+
+def _flatten_array(array: Any) -> Iterable[int]:
+    if isinstance(array, list):
+        for item in array:
+            yield from _flatten_array(item)
+    else:
+        yield int(array)
+
+
+def _write_manifest(path: Path, manifest: DatasetArtifactManifest) -> None:
+    manifest_payload = {
+        "status": manifest.status,
+        "config": manifest.config,
+        "split_names": list(manifest.split_names),
+        "split_counts": dict(manifest.split_counts),
+        "seeds": {split: list(seeds) for split, seeds in manifest.seeds.items()},
+        "shards": [
+            {
+                "split": shard.split.value,
+                "name": shard.name,
+                "example_count": shard.example_count,
+                "seeds": list(shard.seeds),
+                "sha256": shard.sha256,
+            }
+            for shard in manifest.shards
+        ],
+    }
+    path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n")
+
+
+def _dataset_config_manifest(config: DatasetConfig) -> Mapping[str, Any]:
+    return {
+        "width": config.width,
+        "height": config.height,
+        "maze_families": [maze_family.value for maze_family in config.maze_families],
+        "split_sizes": {
+            split.value: config.split_sizes[split] for split in DatasetSplitName
+        },
+        "seed_ranges": {
+            split.value: {
+                "start": config.seed_ranges[split].start,
+                "stop": config.seed_ranges[split].stop,
+                "step": config.seed_ranges[split].step,
+            }
+            for split in DatasetSplitName
+        },
+        "border_endpoint_pair_rule": config.border_endpoint_pair_rule.value,
+        "minimum_path_length": config.minimum_path_length,
+        "output_format": config.output_format.value,
+        "shard_size": config.shard_size,
+        "write_preview_images": config.write_preview_images,
+        "max_rejections_per_split": config.max_rejections_per_split,
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as artifact:
+        for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _build_training_example(

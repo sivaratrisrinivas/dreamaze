@@ -50,7 +50,8 @@ Training and the proof demo are planned for Hugging Face. Training should run on
 
 Dreamaze now includes Graph Validation for proposed Solution Masks and Dataset
 Builder support for deterministic Kruskal and Wilson Training Examples plus
-deterministic train, validation, and test Dataset Splits.
+deterministic train, validation, and test Dataset Splits. It can also persist
+those splits as sharded Dataset Artifacts with a resumable manifest.
 
 The validator checks a submitted mask without creating, filling, repairing, or replacing the path. It accepts a mask only when the marked cells form one continuous 4-Way Movement route from the Start Cell to the Goal Cell through open Grid Maze cells.
 
@@ -86,6 +87,17 @@ Path Length rejections are skipped and replaced until the requested split is
 full or the rejection limit is hit. Invariant failures, including duplicate
 split seeds, invalid Unique Solution Paths, invalid Training Labels, or
 rendering mismatches, stop generation loudly.
+
+Dataset Artifacts are written with `write_dataset_artifacts(...)`. The writer
+stores compressed split shards, each containing the Maze Condition arrays,
+Solution Masks, endpoint positions, Maze Family, split, seed, and metadata
+needed for training and audit. It also writes `manifest.json` with the Dataset
+Config, split names, split counts, seeds used, shard names, shard counts,
+SHA-256 integrity checks, and build status. Re-running against a complete
+matching manifest skips regeneration after checking every shard hash; incomplete
+manifests or missing shards fail clearly. Optional Preview Images are written
+under `previews/` for inspection and are not part of the training artifact
+source data.
 
 Run the test suite with:
 
