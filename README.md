@@ -46,6 +46,28 @@ The project will be built in stages.
 
 Training and the proof demo are planned for Hugging Face. Training should run on Hugging Face compute, and the demo should run on Hugging Face Spaces.
 
+## Current Implementation
+
+Dreamaze now includes Graph Validation for proposed Solution Masks.
+
+The validator checks a submitted mask without creating, filling, repairing, or replacing the path. It accepts a mask only when the marked cells form one continuous 4-Way Movement route from the Start Cell to the Goal Cell through open Grid Maze cells.
+
+Invalid masks return a structured Validation Reason:
+
+- `empty_mask`
+- `missing_start`
+- `missing_goal`
+- `wall_crossing`
+- `disconnected`
+- `diagonal_only`
+- `extra_branch`
+
+Run the test suite with:
+
+```bash
+pytest
+```
+
 ## Not Yet
 
 These ideas are intentionally saved for later:
