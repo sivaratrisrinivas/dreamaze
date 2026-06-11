@@ -99,6 +99,21 @@ manifests or missing shards fail clearly. Optional Preview Images are written
 under `previews/` for inspection and are not part of the training artifact
 source data.
 
+The Dataset Builder CLI can run the same artifact writer for a small smoke-test
+dataset or the First Dataset Size:
+
+```bash
+dreamaze-dataset build --preset tiny --output-dir ./artifacts/tiny --preview-images
+dreamaze-dataset build --preset first --output-dir ./artifacts/first
+```
+
+The `tiny` preset writes 3 training, 1 validation, and 1 test Training Example
+with small 4 by 4 Grid Mazes for CI and local checks. The `first` preset uses
+the First Dataset Size: 10,000 training, 1,000 validation, and 1,000 test
+Training Examples. Re-running the command against a completed matching manifest
+resumes by reusing the existing Dataset Artifacts after the writer verifies
+shard integrity.
+
 Run the test suite with:
 
 ```bash
