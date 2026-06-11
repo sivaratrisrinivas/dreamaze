@@ -11,6 +11,7 @@ BoolGrid = tuple[tuple[bool, ...], ...]
 
 class MazeFamily(StrEnum):
     KRUSKAL = "kruskal"
+    WILSON = "wilson"
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class TrainingExampleConfig:
     width: int = 16
     height: int = 16
     split: str = "train"
+    maze_family: MazeFamily = MazeFamily.KRUSKAL
 
 
 @dataclass(frozen=True)
@@ -120,10 +122,42 @@ class TrainingExample:
 def build_kruskal_training_example(
     *, seed: int, config: TrainingExampleConfig
 ) -> TrainingExample:
-    rng = Random(seed)
-    cell_graph_maze = _build_kruskal_cell_graph_maze(
-        width=config.width, height=config.height, rng=rng
+    return _build_training_example(
+        seed=seed, config=config, maze_family=MazeFamily.KRUSKAL
     )
+
+
+def build_wilson_training_example(
+    *, seed: int, config: TrainingExampleConfig
+) -> TrainingExample:
+    return _build_training_example(
+        seed=seed, config=config, maze_family=MazeFamily.WILSON
+    )
+
+
+def build_training_example(
+    *, seed: int, config: TrainingExampleConfig
+) -> TrainingExample:
+    return _build_training_example(
+        seed=seed, config=config, maze_family=config.maze_family
+    )
+
+
+def _build_training_example(
+    *, seed: int, config: TrainingExampleConfig, maze_family: MazeFamily
+) -> TrainingExample:
+    rng = Random(seed)
+    if maze_family == MazeFamily.KRUSKAL:
+        cell_graph_maze = _build_kruskal_cell_graph_maze(
+            width=config.width, height=config.height, rng=rng
+        )
+    elif maze_family == MazeFamily.WILSON:
+        cell_graph_maze = _build_wilson_cell_graph_maze(
+            width=config.width, height=config.height, rng=rng
+        )
+    else:
+        raise ValueError(f"Unsupported Maze Family: {maze_family}")
+
     start_cell, goal_cell = _choose_border_endpoint_pair(cell_graph_maze, rng)
     solution_path = _unique_solution_path(cell_graph_maze, start_cell, goal_cell)
     training_label = _solution_path_mask(
@@ -139,7 +173,7 @@ def build_kruskal_training_example(
         cell_graph_maze=cell_graph_maze,
         start_cell=start_cell,
         goal_cell=goal_cell,
-        maze_family=MazeFamily.KRUSKAL,
+        maze_family=maze_family,
         training_label=training_label,
         maze_condition=maze_condition,
         split=config.split,
@@ -148,6 +182,7 @@ def build_kruskal_training_example(
         metadata={
             "width": config.width,
             "height": config.height,
+            "maze_family": maze_family.value,
             "path_length": len(solution_path),
         },
     )
@@ -176,6 +211,43 @@ def _build_kruskal_cell_graph_maze(
     return CellGraphMaze(width=width, height=height, passages=frozenset(passages))
 
 
+def _build_wilson_cell_graph_maze(
+    *, width: int, height: int, rng: Random
+) -> CellGraphMaze:
+    if width < 2 or height < 2:
+        raise ValueError("Wilson Training Examples need at least a 2 by 2 maze")
+
+    unvisited = {(row, column) for row in range(height) for column in range(width)}
+    first_cell = rng.choice(sorted(unvisited))
+    unvisited.remove(first_cell)
+    passages: set[Edge] = set()
+
+    while unvisited:
+        start_cell = rng.choice(sorted(unvisited))
+        path = [start_cell]
+        path_indexes = {start_cell: 0}
+
+        while path[-1] in unvisited:
+            next_cell = rng.choice(
+                _neighboring_cells(cell=path[-1], width=width, height=height)
+            )
+            if next_cell in path_indexes:
+                loop_start = path_indexes[next_cell]
+                for removed_cell in path[loop_start + 1 :]:
+                    del path_indexes[removed_cell]
+                path = path[: loop_start + 1]
+                continue
+
+            path_indexes[next_cell] = len(path)
+            path.append(next_cell)
+
+        for first, second in zip(path, path[1:]):
+            passages.add(frozenset((first, second)))
+            unvisited.discard(first)
+
+    return CellGraphMaze(width=width, height=height, passages=frozenset(passages))
+
+
 def _candidate_edges(*, width: int, height: int) -> Iterable[tuple[Cell, Cell]]:
     for row in range(height):
         for column in range(width):
@@ -183,6 +255,19 @@ def _candidate_edges(*, width: int, height: int) -> Iterable[tuple[Cell, Cell]]:
                 yield (row, column), (row + 1, column)
             if column + 1 < width:
                 yield (row, column), (row, column + 1)
+
+
+def _neighboring_cells(*, cell: Cell, width: int, height: int) -> tuple[Cell, ...]:
+    row, column = cell
+    candidates = (
+        (row - 1, column),
+        (row + 1, column),
+        (row, column - 1),
+        (row, column + 1),
+    )
+    return tuple(
+        neighbor for neighbor in candidates if _in_bounds(neighbor, width, height)
+    )
 
 
 def _find(parent: dict[Cell, Cell], cell: Cell) -> Cell:

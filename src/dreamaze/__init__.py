@@ -7,6 +7,8 @@ from dreamaze.dataset import (
     TrainingExample,
     TrainingExampleConfig,
     build_kruskal_training_example,
+    build_training_example,
+    build_wilson_training_example,
 )
 from dreamaze.validation import (
     SolutionValidationResult,
@@ -23,5 +25,7 @@ __all__ = [
     "TrainingExampleConfig",
     "ValidationReason",
     "build_kruskal_training_example",
+    "build_training_example",
+    "build_wilson_training_example",
     "validate_solution_mask",
 ]
