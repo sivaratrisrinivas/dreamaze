@@ -1,8 +1,10 @@
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from random import Random
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
+
+from dreamaze.validation import validate_solution_mask
 
 Cell = tuple[int, int]
 Edge = frozenset[Cell]
@@ -12,6 +14,49 @@ BoolGrid = tuple[tuple[bool, ...], ...]
 class MazeFamily(StrEnum):
     KRUSKAL = "kruskal"
     WILSON = "wilson"
+
+
+class DatasetSplitName(StrEnum):
+    TRAIN = "train"
+    VALIDATION = "validation"
+    TEST = "test"
+
+
+class DatasetOutputFormat(StrEnum):
+    NUMPY = "numpy"
+
+
+class BorderEndpointPairRule(StrEnum):
+    FAR_APART_BORDER_CELLS = "far_apart_border_cells"
+
+
+@dataclass(frozen=True)
+class DatasetConfig:
+    width: int = 16
+    height: int = 16
+    maze_families: tuple[MazeFamily, ...] = (MazeFamily.KRUSKAL, MazeFamily.WILSON)
+    split_sizes: Mapping[DatasetSplitName, int] = field(
+        default_factory=lambda: {
+            DatasetSplitName.TRAIN: 10_000,
+            DatasetSplitName.VALIDATION: 1_000,
+            DatasetSplitName.TEST: 1_000,
+        }
+    )
+    seed_ranges: Mapping[DatasetSplitName, range] = field(
+        default_factory=lambda: {
+            DatasetSplitName.TRAIN: range(0, 100_000),
+            DatasetSplitName.VALIDATION: range(100_000, 200_000),
+            DatasetSplitName.TEST: range(200_000, 300_000),
+        }
+    )
+    border_endpoint_pair_rule: BorderEndpointPairRule = (
+        BorderEndpointPairRule.FAR_APART_BORDER_CELLS
+    )
+    minimum_path_length: int = 1
+    output_format: DatasetOutputFormat = DatasetOutputFormat.NUMPY
+    shard_size: int = 1024
+    write_preview_images: bool = False
+    max_rejections_per_split: int = 1000
 
 
 @dataclass(frozen=True)
@@ -119,6 +164,32 @@ class TrainingExample:
         )
 
 
+@dataclass(frozen=True)
+class DatasetSplit:
+    name: DatasetSplitName
+    examples: tuple[TrainingExample, ...]
+    rejected_seeds: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class DatasetSplits:
+    train: DatasetSplit
+    validation: DatasetSplit
+    test: DatasetSplit
+
+
+class DatasetGenerationError(RuntimeError):
+    pass
+
+
+class DatasetInvariantError(DatasetGenerationError):
+    pass
+
+
+class DatasetRejectionLimitError(DatasetGenerationError):
+    pass
+
+
 def build_kruskal_training_example(
     *, seed: int, config: TrainingExampleConfig
 ) -> TrainingExample:
@@ -140,6 +211,37 @@ def build_training_example(
 ) -> TrainingExample:
     return _build_training_example(
         seed=seed, config=config, maze_family=config.maze_family
+    )
+
+
+class TrainingExampleBuilder(Protocol):
+    def __call__(
+        self, *, seed: int, config: TrainingExampleConfig
+    ) -> TrainingExample: ...
+
+
+def build_dataset_splits(
+    *,
+    config: DatasetConfig,
+    training_example_builder: TrainingExampleBuilder = build_training_example,
+) -> DatasetSplits:
+    _validate_dataset_config(config)
+    return DatasetSplits(
+        train=_build_dataset_split(
+            name=DatasetSplitName.TRAIN,
+            config=config,
+            training_example_builder=training_example_builder,
+        ),
+        validation=_build_dataset_split(
+            name=DatasetSplitName.VALIDATION,
+            config=config,
+            training_example_builder=training_example_builder,
+        ),
+        test=_build_dataset_split(
+            name=DatasetSplitName.TEST,
+            config=config,
+            training_example_builder=training_example_builder,
+        ),
     )
 
 
@@ -186,6 +288,108 @@ def _build_training_example(
             "path_length": len(solution_path),
         },
     )
+
+
+def _build_dataset_split(
+    *,
+    name: DatasetSplitName,
+    config: DatasetConfig,
+    training_example_builder: TrainingExampleBuilder,
+) -> DatasetSplit:
+    if config.split_sizes[name] == 0:
+        return DatasetSplit(name=name, examples=(), rejected_seeds=())
+
+    examples: list[TrainingExample] = []
+    rejected_seeds: list[int] = []
+
+    for seed in config.seed_ranges[name]:
+        maze_family = config.maze_families[
+            (len(examples) + len(rejected_seeds)) % len(config.maze_families)
+        ]
+        example = training_example_builder(
+            seed=seed,
+            config=TrainingExampleConfig(
+                width=config.width,
+                height=config.height,
+                split=name.value,
+                maze_family=maze_family,
+            ),
+        )
+        _validate_training_example_invariants(example)
+
+        if len(example.solution_path) < config.minimum_path_length:
+            rejected_seeds.append(seed)
+            if len(rejected_seeds) > config.max_rejections_per_split:
+                raise DatasetRejectionLimitError(
+                    f"{name.value} exceeded {config.max_rejections_per_split} "
+                    "expected rejections"
+                )
+            continue
+
+        examples.append(example)
+        if len(examples) == config.split_sizes[name]:
+            return DatasetSplit(
+                name=name,
+                examples=tuple(examples),
+                rejected_seeds=tuple(rejected_seeds),
+            )
+
+    raise DatasetRejectionLimitError(
+        f"{name.value} seed range ended before {config.split_sizes[name]} "
+        "Training Examples were accepted"
+    )
+
+
+def _validate_dataset_config(config: DatasetConfig) -> None:
+    if not config.maze_families:
+        raise ValueError("Dataset config needs at least one Maze Family")
+    if config.minimum_path_length < 1:
+        raise ValueError("Dataset config Minimum Path Length must be positive")
+    if config.max_rejections_per_split < 0:
+        raise ValueError("Dataset config rejection limit cannot be negative")
+
+    seen_seeds: set[int] = set()
+    for name in DatasetSplitName:
+        if name not in config.split_sizes:
+            raise ValueError(f"Dataset config is missing {name.value} split size")
+        if name not in config.seed_ranges:
+            raise ValueError(f"Dataset config is missing {name.value} seed range")
+        if config.split_sizes[name] < 0:
+            raise ValueError(f"{name.value} split size cannot be negative")
+        for seed in config.seed_ranges[name]:
+            if seed in seen_seeds:
+                raise DatasetInvariantError(
+                    f"Duplicate split seed {seed} appears in multiple Dataset Splits"
+                )
+            seen_seeds.add(seed)
+
+
+def _validate_training_example_invariants(example: TrainingExample) -> None:
+    if not example.cell_graph_maze.is_perfect():
+        raise DatasetInvariantError("Cell Graph Maze is not a Perfect Maze")
+    if example.solution_path != example.cell_graph_maze.unique_path(
+        example.start_cell, example.goal_cell
+    ):
+        raise DatasetInvariantError(
+            "Training Example has an invalid Unique Solution Path"
+        )
+    if example.training_label != example.solution_path_mask():
+        raise DatasetInvariantError("Training Label does not match Solution Path")
+    if example.maze_condition.rendered_maze != example.cell_graph_maze.render():
+        raise DatasetInvariantError(
+            "Maze Condition rendering does not match Cell Graph Maze"
+        )
+
+    result = validate_solution_mask(
+        grid_maze=example.maze_condition.rendered_maze,
+        solution_mask=example.training_label,
+        start_cell=example.rendered_start_cell,
+        goal_cell=example.rendered_goal_cell,
+    )
+    if not result.valid:
+        raise DatasetInvariantError(
+            f"Training Label is not a Valid Solution: {result.reason}"
+        )
 
 
 def _build_kruskal_cell_graph_maze(

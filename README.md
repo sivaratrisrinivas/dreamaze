@@ -49,7 +49,8 @@ Training and the proof demo are planned for Hugging Face. Training should run on
 ## Current Implementation
 
 Dreamaze now includes Graph Validation for proposed Solution Masks and Dataset
-Builder tracer bullets for deterministic Kruskal and Wilson Training Examples.
+Builder support for deterministic Kruskal and Wilson Training Examples plus
+deterministic train, validation, and test Dataset Splits.
 
 The validator checks a submitted mask without creating, filling, repairing, or replacing the path. It accepts a mask only when the marked cells form one continuous 4-Way Movement route from the Start Cell to the Goal Cell through open Grid Maze cells.
 
@@ -74,6 +75,17 @@ cells do not look connected to Graph Validation.
 Use `build_training_example(...)` with `TrainingExampleConfig.maze_family` to
 select a Maze Family, or call the family-specific helpers
 `build_kruskal_training_example(...)` and `build_wilson_training_example(...)`.
+
+Dataset Splits are generated with `build_dataset_splits(...)` and
+`DatasetConfig`. The config carries the First Maze Size, Maze Families, train /
+validation / test split sizes, separate fixed seed ranges, the Border Endpoint
+Pair rule, Minimum Path Length, output format, shard size, and Preview Image
+setting. Each split uses its own fixed seed range, so generated Training
+Examples are deterministic and split membership is stable. Expected Minimum
+Path Length rejections are skipped and replaced until the requested split is
+full or the rejection limit is hit. Invariant failures, including duplicate
+split seeds, invalid Unique Solution Paths, invalid Training Labels, or
+rendering mismatches, stop generation loudly.
 
 Run the test suite with:
 
