@@ -48,10 +48,11 @@ Training and the proof demo are planned for Hugging Face. Training should run on
 
 ## Current Implementation
 
-Dreamaze now includes Graph Validation for proposed Solution Masks and Dataset
+Dreamaze now includes Graph Validation for proposed Solution Masks, Dataset
 Builder support for deterministic Kruskal and Wilson Training Examples plus
-deterministic train, validation, and test Dataset Splits. It can also persist
-those splits as sharded Dataset Artifacts with a resumable manifest.
+deterministic train, validation, and test Dataset Splits, and a small
+Conditional Diffusion Solver training tracer bullet. The Dataset Builder can
+persist those splits as sharded Dataset Artifacts with a resumable manifest.
 
 The validator checks a submitted mask without creating, filling, repairing, or replacing the path. It accepts a mask only when the marked cells form one continuous 4-Way Movement route from the Start Cell to the Goal Cell through open Grid Maze cells.
 
@@ -113,6 +114,37 @@ the First Dataset Size: 10,000 training, 1,000 validation, and 1,000 test
 Training Examples. Re-running the command against a completed matching manifest
 resumes by reusing the existing Dataset Artifacts after the writer verifies
 shard integrity.
+
+The first training tracer bullet is intentionally small and CPU-friendly. It
+loads sharded Dataset Artifacts, conditions on Maze Condition arrays, trains a
+custom Conditional Diffusion Solver toward Solution Masks, and writes JSON
+checkpoints. It is a smoke path for training infrastructure, not a claim that
+Dreamaze has reached the First Success Target.
+
+Create a training config such as:
+
+```json
+{
+  "dataset_dir": "./artifacts/tiny",
+  "checkpoint_dir": "./artifacts/checkpoints",
+  "split": "train",
+  "batch_size": 2,
+  "sampling_steps": 3,
+  "max_train_steps": 1,
+  "checkpoint_every_steps": 1,
+  "learning_rate": 0.05,
+  "seed": 123,
+  "device": "cpu",
+  "precision": "float32",
+  "num_workers": 0
+}
+```
+
+Then run:
+
+```bash
+dreamaze-train --config ./training.json
+```
 
 Run the test suite with:
 

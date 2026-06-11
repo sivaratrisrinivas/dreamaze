@@ -20,6 +20,12 @@ from dreamaze.dataset import (
     build_training_example,
     build_wilson_training_example,
 )
+from dreamaze.training import (
+    TrainingConfig,
+    TrainingResult,
+    load_training_config,
+    train_conditional_diffusion_solver,
+)
 from dreamaze.validation import (
     SolutionValidationResult,
     ValidationReason,
@@ -42,10 +48,14 @@ __all__ = [
     "SolutionValidationResult",
     "TrainingExample",
     "TrainingExampleConfig",
+    "TrainingConfig",
+    "TrainingResult",
     "ValidationReason",
     "build_dataset_splits",
     "build_kruskal_training_example",
     "build_training_example",
     "build_wilson_training_example",
+    "load_training_config",
+    "train_conditional_diffusion_solver",
     "validate_solution_mask",
 ]
