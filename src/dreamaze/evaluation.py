@@ -86,6 +86,13 @@ class EvaluationResult:
 
 
 @dataclass(frozen=True)
+class ConditionalDiffusionSamplingExample:
+    maze_condition: tuple[tuple[int, ...], ...]
+    start_cell: tuple[int, int]
+    goal_cell: tuple[int, int]
+
+
+@dataclass(frozen=True)
 class _EvaluationExampleArrays:
     maze_condition: tuple[tuple[int, ...], ...]
     solution_mask: tuple[tuple[int, ...], ...]
@@ -169,6 +176,28 @@ def evaluate_conditional_diffusion_solver(
         retry_success=retry_success,
         mask_overlap=sum(mask_overlaps) / evaluated_examples,
         failure_reason_counts=dict(sorted(failure_reasons.items())),
+    )
+
+
+def sample_conditional_diffusion_solution_mask(
+    *,
+    example: ConditionalDiffusionSamplingExample,
+    weights: Mapping[str, float],
+    sampling_steps: int,
+    rng: Random,
+) -> tuple[tuple[bool, ...], ...]:
+    if sampling_steps < 1:
+        raise ValueError("Conditional Diffusion Solver sampling steps must be positive")
+    return _sample_solution_mask(
+        example=_EvaluationExampleArrays(
+            maze_condition=example.maze_condition,
+            solution_mask=(),
+            start_cell=example.start_cell,
+            goal_cell=example.goal_cell,
+        ),
+        weights=weights,
+        sampling_steps=sampling_steps,
+        rng=rng,
     )
 
 

@@ -50,8 +50,9 @@ Training and the proof demo are planned for Hugging Face. Training should run on
 
 Dreamaze now includes Graph Validation for proposed Solution Masks, Dataset
 Builder support for deterministic Kruskal and Wilson Training Examples plus
-deterministic train, validation, and test Dataset Splits, and a small
-Conditional Diffusion Solver training tracer bullet. The Dataset Builder can
+deterministic train, validation, and test Dataset Splits, a small Conditional
+Diffusion Solver training tracer bullet, evaluation, Hugging Face Jobs launch
+packaging, and a Hugging Face Spaces Proof Demo target. The Dataset Builder can
 persist those splits as sharded Dataset Artifacts with a resumable manifest.
 
 The validator checks a submitted mask without creating, filling, repairing, or replacing the path. It accepts a mask only when the marked cells form one continuous 4-Way Movement route from the Start Cell to the Goal Cell through open Grid Maze cells.
@@ -250,6 +251,56 @@ If the Hugging Face backend rejects `h100x8` for the current account, region, or
 quota, set `"hardware_flavor": "a100x8"` in the same config as the next-best
 fallback. Keep `--dry-run` until the command, output repo, and expected spend
 are checked.
+
+## Hugging Face Spaces Proof Demo
+
+The Proof Demo target lives in `spaces/proof_demo`. It is a Gradio Space that
+calls the same Conditional Diffusion Solver sampling path used by evaluation,
+then runs Solution Validation against the generated Solution Mask. Invalid
+outputs are displayed as invalid with their Validation Reason; the Space does
+not use DFS, BFS, A*, or any other classical pathfinding fallback to repair or
+replace Runtime Solving.
+
+The Space can run from a trained checkpoint by setting:
+
+```bash
+DREAMAZE_CHECKPOINT_PATH=/path/to/checkpoint-step-000001.json
+```
+
+If that variable is unset, the demo uses the configured tiny fixture checkpoint
+so the browser UI and validation states can be smoke-tested before a real model
+artifact is uploaded.
+
+To create a Space repo, start with the cheapest path:
+
+```bash
+hf repos create your-name/dreamaze-proof-demo --type space --space-sdk gradio --flavor cpu-basic --public --exist-ok
+```
+
+Then upload the Space app and package source:
+
+```bash
+hf upload your-name/dreamaze-proof-demo spaces/proof_demo/app.py app.py
+hf upload your-name/dreamaze-proof-demo spaces/proof_demo/README.md README.md
+hf upload your-name/dreamaze-proof-demo spaces/proof_demo/requirements.txt requirements.txt
+hf upload your-name/dreamaze-proof-demo pyproject.toml pyproject.toml
+hf upload your-name/dreamaze-proof-demo src src
+```
+
+Use `cpu-basic` for the tiny fixture because it has no creator GPU cost. Use
+`zero-a10g` when the account is eligible for ZeroGPU and queued/free GPU
+execution is preferable to predictable latency. Move to paid dedicated GPU
+hardware only when the trained checkpoint needs lower latency or more reliable
+capacity, because the Space owner is billed while that hardware is attached.
+
+Manual browser smoke checks:
+
+- Load the Space and confirm the Rendered Maze shows Start Cell and Goal Cell.
+- Click Run Solver and confirm the generated Solution Mask appears.
+- Confirm Valid Solution status and Validation Reason update together.
+- Enable Debug Reveal and confirm Training Label and Debug Difference appear.
+- Set Sampling Retry Count above zero and confirm it is labeled separately from
+  Single-Sample Success and excluded from the official score.
 
 Run the test suite with:
 
