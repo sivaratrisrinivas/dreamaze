@@ -269,7 +269,8 @@ Keep `--dry-run` until the command, output repo, and expected spend are checked.
 
 ## Hugging Face Spaces Proof Demo
 
-The Proof Demo target lives in `spaces/proof_demo`. It is a Gradio Space that
+The Proof Demo target lives in `spaces/proof_demo`. It is a Docker Space with a
+small FastAPI backend and a plain HTML/CSS/JavaScript frontend. The backend
 calls the same Conditional Diffusion Solver sampling path used by evaluation,
 then runs Solution Validation against the generated Solution Mask. Invalid
 outputs are displayed as invalid with their Validation Reason; the Space does
@@ -285,8 +286,8 @@ single-sample execution for the official score, debug reveal disabled). This
 keeps the experience extremely intuitive while still exercising the full
 learned solver on live Runtime Solving.
 
-The result is a rich, self-contained visualization built with embedded
-HTML/CSS/JavaScript. It renders the input Rendered Maze (with Start Cell in
+The result is a rich visualization rendered by the browser UI. It renders the
+input Rendered Maze (with Start Cell in
 green and Goal Cell in red) and then auto-plays a smooth animation of the
 Conditional Diffusion Solver's complete denoising trajectory. Viewers watch
 the Solution Mask emerge in real time from pure noise through iterative
@@ -297,15 +298,36 @@ intermediate states from the solver (exposed via the new
 `sample_conditional_diffusion_solution_mask_trajectory` helper) so it
 faithfully represents the diffusion process rather than a post-hoc effect.
 
-The Space requires a trained Dreamaze Diffusers checkpoint directory:
+The Space requires a trained Dreamaze Diffusers checkpoint. The intended
+HF-only path is to point the Space at a checkpoint subfolder in the Hugging
+Face model repo:
 
 ```bash
-DREAMAZE_CHECKPOINT_PATH=/path/to/checkpoint-step-000001
+DREAMAZE_CHECKPOINT_REPO_ID=Srini410/dreamaze-solver
+DREAMAZE_CHECKPOINT_REPO_PATH=checkpoints/diffusers-t4-budget-1000-retry-20260612b/checkpoint-step-001000
 ```
 
 If that variable is unset or points to a missing checkpoint, the Space fails at
 startup. The public demo is considered deployable only when a Trained Solver
 Checkpoint is configured.
+
+Deploy and run the app on Hugging Face with one command from this repo:
+
+```bash
+DREAMAZE_CHECKPOINT_REPO_ID=Srini410/dreamaze-solver DREAMAZE_CHECKPOINT_REPO_PATH=checkpoints/diffusers-t4-budget-1000-retry-20260612b/checkpoint-step-001000 ./run.sh
+```
+
+`./run.sh` does not create a local virtualenv, install Python packages, download
+models, or run the solver on your machine. It uploads the Space source, sets the
+Space variables, requests the configured Hugging Face GPU hardware, restarts the
+Space, and prints the public app URL. The Space downloads the checkpoint and
+installs dependencies inside Hugging Face infrastructure. It also sets
+`SPACE_SLEEP_TIME=300` by default so paid GPU hardware sleeps after five idle
+minutes. Override the target only when needed:
+
+```bash
+SPACE_ID=Srini410/dreamaze-proof-demo SPACE_HARDWARE=T4_SMALL DREAMAZE_CHECKPOINT_REPO_ID=Srini410/dreamaze-solver DREAMAZE_CHECKPOINT_REPO_PATH=checkpoints/diffusers-t4-budget-1000-retry-20260612b/checkpoint-step-001000 ./run.sh
+```
 
 The first public deployment is:
 
@@ -313,8 +335,10 @@ The first public deployment is:
 - Artifact dataset repo: <https://huggingface.co/datasets/Srini410/dreamaze-artifacts>
 - Solver model repo: <https://huggingface.co/Srini410/dreamaze-solver>
 
-The Proof Demo Space runs on Hugging Face ZeroGPU because the deployment target
-is a public learned-solver demo.
+The HTML/CSS/JavaScript Proof Demo Space is packaged as a Docker Space, so it
+should run on regular paid GPU hardware when the trained checkpoint requires
+CUDA. Hugging Face ZeroGPU is currently limited to Gradio SDK Spaces; use a
+Gradio wrapper only if ZeroGPU is the hard deployment requirement.
 
 The earlier public Space was configured with the initial trained tracer-bullet
 checkpoint:
@@ -327,33 +351,9 @@ does not meet the First Success Target. Its tiny validation run reported 0.0
 Single-Sample Success. The current model path is the Diffusers checkpoint
 directory format described above.
 
-To create the deployment repos with the installed `hf` CLI:
-
-```bash
-hf repo create Srini410/dreamaze-proof-demo --repo-type space --space_sdk gradio --exist-ok
-hf repo create Srini410/dreamaze-artifacts --repo-type dataset --private --exist-ok
-hf repo create Srini410/dreamaze-solver --exist-ok
-```
-
-Then upload the Space app and package source:
-
-```bash
-hf upload Srini410/dreamaze-proof-demo spaces/proof_demo/app.py app.py --repo-type space
-hf upload Srini410/dreamaze-proof-demo spaces/proof_demo/README.md README.md --repo-type space
-hf upload Srini410/dreamaze-proof-demo spaces/proof_demo/requirements.txt requirements.txt --repo-type space
-hf upload Srini410/dreamaze-proof-demo src src --repo-type space
-```
-
-Set the Space hardware to ZeroGPU with the Hub API:
-
-```bash
-python -c "from huggingface_hub import HfApi, SpaceHardware; HfApi().request_space_hardware('Srini410/dreamaze-proof-demo', SpaceHardware.ZERO_A10G)"
-```
-
-Use `zero-a10g` when the account is eligible for ZeroGPU and queued/free GPU
-execution is preferable to predictable latency. Move to paid dedicated GPU
-hardware only when the trained checkpoint needs lower latency or more reliable
-capacity, because the Space owner is billed while that hardware is attached.
+Move to a larger paid GPU only when the trained checkpoint needs lower latency
+or more memory, because the Space owner is billed while that hardware is
+attached. ZeroGPU is not compatible with this Docker/HTML frontend path.
 
 Manual browser smoke checks (fully automated Proof Demo UI):
 

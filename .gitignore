@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
+*.egg-info/
 
 # Environment secrets (never commit tokens, keys, or local config)
 .env

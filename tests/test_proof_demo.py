@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import types
 from dataclasses import replace
 from pathlib import Path
 
@@ -55,6 +56,7 @@ def test_diffusion_viz_html_falls_back_without_trajectory():
 
 def test_space_app_requires_checkpoint_at_startup(monkeypatch):
     monkeypatch.delenv("DREAMAZE_CHECKPOINT_PATH", raising=False)
+    monkeypatch.delenv("DREAMAZE_ALLOW_SMOKE_MODE", raising=False)
 
     try:
         _load_space_app("dreamaze_space_missing_checkpoint")
@@ -64,6 +66,41 @@ def test_space_app_requires_checkpoint_at_startup(monkeypatch):
         raise AssertionError("Space app started without a Trained Solver Checkpoint")
 
 
+def test_space_app_can_start_in_explicit_smoke_mode_without_checkpoint(monkeypatch):
+    monkeypatch.delenv("DREAMAZE_CHECKPOINT_PATH", raising=False)
+    monkeypatch.setenv("DREAMAZE_ALLOW_SMOKE_MODE", "1")
+
+    module = _load_space_app("dreamaze_space_smoke_mode")
+
+    assert module.healthz() == {"status": "ok"}
+    assert "UI smoke mode" in module.run_automated_demo()
+
+
+def test_space_app_can_resolve_checkpoint_from_hugging_face_repo_env(
+    monkeypatch, tmp_path
+):
+    checkpoint_root = tmp_path / "hub-cache"
+    checkpoint_dir = checkpoint_root / "checkpoints" / "run" / "checkpoint-step-000001"
+    (checkpoint_dir / "unet").mkdir(parents=True)
+    (checkpoint_dir / "scheduler").mkdir()
+    (checkpoint_dir / "metadata.json").write_text("{}")
+
+    fake_hub = types.SimpleNamespace(
+        snapshot_download=lambda **_kwargs: str(checkpoint_root)
+    )
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.delenv("DREAMAZE_CHECKPOINT_PATH", raising=False)
+    monkeypatch.delenv("DREAMAZE_ALLOW_SMOKE_MODE", raising=False)
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_REPO_ID", "Srini410/dreamaze-solver")
+    monkeypatch.setenv(
+        "DREAMAZE_CHECKPOINT_REPO_PATH", "checkpoints/run/checkpoint-step-000001"
+    )
+
+    module = _load_space_app("dreamaze_space_repo_checkpoint")
+
+    assert module._resolve_checkpoint_path() == checkpoint_dir
+
+
 def test_space_app_exposes_only_solve_new_maze_handler(monkeypatch, tmp_path):
     checkpoint_dir = tmp_path / "checkpoint-step-000001"
     checkpoint_dir.mkdir()
@@ -71,8 +108,35 @@ def test_space_app_exposes_only_solve_new_maze_handler(monkeypatch, tmp_path):
     module = _load_space_app("dreamaze_space_one_button")
 
     assert hasattr(module, "run_automated_demo")
+    assert hasattr(module, "solve_new_maze")
+    assert hasattr(module, "app")
     assert not hasattr(module, "run_demo")
     assert not hasattr(module, "_run_demo_for_gradio")
+    assert not hasattr(module, "build_app")
+
+
+def test_space_app_serves_html_css_js_ui(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    module = _load_space_app("dreamaze_space_static_ui")
+
+    index = module.index()
+    static_dir = _SPACE_APP_PATH.parent / "static"
+
+    assert Path(index.path) == static_dir / "index.html"
+    assert (static_dir / "styles.css").exists()
+    assert (static_dir / "app.js").exists()
+
+
+def test_space_app_solve_endpoint_returns_visualization_html(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    module = _load_space_app("dreamaze_space_solve_endpoint")
+    monkeypatch.setattr(module, "_run_automated_for_http", lambda: "<div>solved</div>")
+
+    assert module.solve_new_maze() == {"html": "<div>solved</div>"}
 
 
 def _load_space_app(module_name: str):

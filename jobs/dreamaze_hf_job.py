@@ -97,6 +97,16 @@ def main() -> int:
             repo_type=args.output_repo_type,
             path_in_repo=args.output_path_in_repo,
         )
+    if args.model_output_repo is not None:
+        _upload_checkpoint(
+            checkpoint_path=latest_checkpoint,
+            repo_id=args.model_output_repo,
+            path_in_repo=(
+                args.model_output_path_in_repo.rstrip("/")
+                + "/"
+                + latest_checkpoint.name
+            ),
+        )
 
     return 0
 
@@ -122,6 +132,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-repo")
     parser.add_argument("--output-repo-type", default="dataset")
     parser.add_argument("--output-path-in-repo", default="dreamaze-runs/latest")
+    parser.add_argument("--model-output-repo")
+    parser.add_argument(
+        "--model-output-path-in-repo",
+        default="checkpoints/latest",
+    )
     return parser
 
 
@@ -169,6 +184,24 @@ def _upload_run_artifacts(
         path_in_repo=path_in_repo,
     )
     print(f"Uploaded run artifacts to {repo_id}/{path_in_repo}")
+
+
+def _upload_checkpoint(*, checkpoint_path: Path, repo_id: str, path_in_repo: str) -> None:
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise RuntimeError("HF_TOKEN is required when --model-output-repo is set")
+
+    from huggingface_hub import HfApi
+
+    api = HfApi(token=token)
+    api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True)
+    api.upload_folder(
+        repo_id=repo_id,
+        repo_type="model",
+        folder_path=str(checkpoint_path),
+        path_in_repo=path_in_repo,
+    )
+    print(f"Uploaded trained checkpoint to {repo_id}/{path_in_repo}")
 
 
 def _common_parent(*paths: Path) -> Path:
