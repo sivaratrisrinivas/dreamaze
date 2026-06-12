@@ -246,8 +246,8 @@ Start with `hardware_flavor` set to `cpu-basic`, `dataset_preset` set to
 and the `first` Dataset Artifact preset only after the dry-run command and tiny
 remote smoke job behave as expected.
 
-For the highest-end GPU path exposed by the installed `hf` CLI, use the
-`best_gpu` compute profile. It resolves to the `h100x8` Hugging Face Jobs
+For the highest-end GPU path exposed by Hugging Face Jobs here, use the
+`best_gpu` compute profile. It resolves to the `a100x8` Hugging Face Jobs
 hardware flavor, CUDA device settings, float16 precision, the First Dataset
 Size preset, and longer training defaults:
 
@@ -264,10 +264,7 @@ Size preset, and longer training defaults:
 dreamaze-hf-job --config ./hf-best-gpu.json --dry-run
 ```
 
-If the Hugging Face backend rejects `h100x8` for the current account, region, or
-quota, set `"hardware_flavor": "a100x8"` in the same config as the next-best
-fallback. Keep `--dry-run` until the command, output repo, and expected spend
-are checked.
+Keep `--dry-run` until the command, output repo, and expected spend are checked.
 
 ## Hugging Face Spaces Proof Demo
 
