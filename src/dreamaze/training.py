@@ -245,24 +245,11 @@ def _condition_channels(example: TrainingExampleArrays) -> list[list[list[float]
     maze_open = [[float(value) for value in row] for row in example.maze_condition]
     start = [[0.0 for _ in range(columns)] for _ in range(rows)]
     goal = [[0.0 for _ in range(columns)] for _ in range(rows)]
-    _mark_endpoint_cross(start, _rendered_cell(example.start_cell))
-    _mark_endpoint_cross(goal, _rendered_cell(example.goal_cell))
+    start_row, start_column = _rendered_cell(example.start_cell)
+    goal_row, goal_column = _rendered_cell(example.goal_cell)
+    start[start_row][start_column] = 1.0
+    goal[goal_row][goal_column] = 1.0
     return [maze_open, start, goal]
-
-
-def _mark_endpoint_cross(channel: list[list[float]], cell: tuple[int, int]) -> None:
-    rows = len(channel)
-    columns = len(channel[0])
-    cell_row, cell_column = cell
-    for row, column in (
-        (cell_row, cell_column),
-        (cell_row - 1, cell_column),
-        (cell_row + 1, cell_column),
-        (cell_row, cell_column - 1),
-        (cell_row, cell_column + 1),
-    ):
-        if 0 <= row < rows and 0 <= column < columns:
-            channel[row][column] = 1.0
 
 
 def _write_checkpoint(

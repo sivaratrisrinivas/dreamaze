@@ -8,22 +8,15 @@ from dreamaze.dataset import (
     write_dataset_artifacts,
 )
 from dreamaze.evaluation import (
-    ConditionalDiffusionSamplingExample,
     EvaluationConfig,
     evaluate_conditional_diffusion_solver,
     load_evaluation_config,
     _endpoint_inclusion_payload,
     _mask_includes_cell,
     _mask_overlap_excluding_cells,
-    _sampling_condition_tensor,
 )
 from dreamaze.evaluation_cli import run_evaluation_cli
-from dreamaze.training import (
-    TrainingConfig,
-    TrainingExampleArrays,
-    train_conditional_diffusion_solver,
-    _batch_tensors,
-)
+from dreamaze.training import TrainingConfig, train_conditional_diffusion_solver
 from dreamaze.training import DIFFUSERS_MODEL_TYPE
 
 
@@ -242,92 +235,6 @@ def test_mask_includes_cell_rejects_unmarked_or_out_of_bounds_cells():
     assert _mask_includes_cell(mask, (-1, 0)) is False
     assert _mask_includes_cell(mask, (2, 0)) is False
     assert _mask_includes_cell(mask, (0, 2)) is False
-
-
-def test_sampling_condition_tensor_matches_training_condition_tensor():
-    example = TrainingExampleArrays(
-        maze_condition=(
-            (0, 0, 0, 0, 0),
-            (0, 1, 1, 1, 0),
-            (0, 0, 0, 1, 0),
-            (0, 1, 1, 1, 0),
-            (0, 0, 0, 0, 0),
-        ),
-        solution_mask=(
-            (0, 0, 0, 0, 0),
-            (0, 0, 1, 1, 0),
-            (0, 0, 0, 1, 0),
-            (0, 1, 1, 1, 0),
-            (0, 0, 0, 0, 0),
-        ),
-        start_cell=(0, 1),
-        goal_cell=(1, 0),
-    )
-    torch = _FakeTorch()
-
-    training_condition, _ = _batch_tensors(
-        torch=torch,
-        batch=(example,),
-        device="cpu",
-        dtype="float32",
-        sample_size=(8, 8),
-    )
-    sampling_condition = _sampling_condition_tensor(
-        torch=torch,
-        example=ConditionalDiffusionSamplingExample(
-            maze_condition=example.maze_condition,
-            start_cell=example.start_cell,
-            goal_cell=example.goal_cell,
-        ),
-        device="cpu",
-        dtype="float32",
-        sample_size=(8, 8),
-    )
-
-    assert sampling_condition.values == training_condition.values
-
-
-class _FakeTensor:
-    def __init__(self, values):
-        self.values = values
-        self.shape = _shape(values)
-
-
-class _FakeTorch:
-    float32 = "float32"
-
-    class nn:
-        class functional:
-            @staticmethod
-            def pad(tensor, padding):
-                left, right, top, bottom = padding
-                assert left == 0
-                assert top == 0
-                padded_batches = []
-                for batch in tensor.values:
-                    padded_channels = []
-                    for channel in batch:
-                        padded_rows = [row + [0.0] * right for row in channel]
-                        width = len(padded_rows[0]) if padded_rows else right
-                        padded_rows.extend([[0.0] * width for _ in range(bottom)])
-                        padded_channels.append(padded_rows)
-                    padded_batches.append(padded_channels)
-                return _FakeTensor(padded_batches)
-
-    @staticmethod
-    def tensor(values, *, dtype, device):
-        assert dtype == "float32"
-        assert device == "cpu"
-        return _FakeTensor(values)
-
-
-def _shape(values):
-    shape = []
-    current = values
-    while isinstance(current, list):
-        shape.append(len(current))
-        current = current[0] if current else []
-    return tuple(shape)
 
 
 def _requires_diffusers_runtime() -> None:

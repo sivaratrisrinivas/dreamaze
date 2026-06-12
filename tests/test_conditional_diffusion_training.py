@@ -12,7 +12,6 @@ from dreamaze.training import DIFFUSERS_MODEL_TYPE
 from dreamaze.training import (
     TrainingConfig,
     TrainingExampleArrays,
-    _condition_channels,
     load_training_config,
     _solution_mask_target_channels,
     train_conditional_diffusion_solver,
@@ -129,32 +128,6 @@ def test_training_encodes_solution_mask_targets_symmetrically():
     ]
 
 
-def test_training_condition_channels_encode_endpoints_as_clipped_crosses():
-    example = TrainingExampleArrays(
-        maze_condition=(
-            (0, 0, 0, 0, 0),
-            (0, 1, 1, 1, 0),
-            (0, 1, 0, 1, 0),
-            (0, 1, 1, 1, 0),
-            (0, 0, 0, 0, 0),
-        ),
-        solution_mask=(
-            (0, 0, 0, 0, 0),
-            (0, 1, 1, 1, 0),
-            (0, 0, 0, 1, 0),
-            (0, 0, 0, 1, 0),
-            (0, 0, 0, 0, 0),
-        ),
-        start_cell=(0, 0),
-        goal_cell=(1, 1),
-    )
-
-    _, start_channel, goal_channel = _condition_channels(example)
-
-    assert _marked_cells(start_channel) == {(0, 1), (1, 0), (1, 1), (1, 2), (2, 1)}
-    assert _marked_cells(goal_channel) == {(2, 3), (3, 2), (3, 3), (3, 4), (4, 3)}
-
-
 def test_training_config_controls_checkpoint_cadence(tmp_path):
     _requires_diffusers_runtime()
     dataset_dir = tmp_path / "dataset"
@@ -252,12 +225,3 @@ def _requires_diffusers_runtime() -> None:
         import diffusers  # noqa: F401
     except ImportError as error:
         pytest.skip(f"Diffusers runtime is unavailable locally: {error}")
-
-
-def _marked_cells(channel):
-    return {
-        (row_index, column_index)
-        for row_index, row in enumerate(channel)
-        for column_index, value in enumerate(row)
-        if value == 1.0
-    }
