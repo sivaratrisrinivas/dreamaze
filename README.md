@@ -49,6 +49,7 @@ Build Dataset Artifacts:
 ```bash
 dreamaze-dataset build --preset tiny --output-dir ./artifacts/tiny --preview-images
 dreamaze-dataset build --preset first --output-dir ./artifacts/first
+dreamaze-dataset build --preset larger --output-dir ./artifacts/larger
 ```
 
 Train with a JSON config:
@@ -68,7 +69,13 @@ Launch a Hugging Face Job:
 ```bash
 dreamaze-hf-job --config ./hf-job.json --dry-run
 dreamaze-hf-job --config ./hf-job.json
+dreamaze-hf-job --config ./configs/hf-job-larger-gpu.json --dry-run
 ```
+
+`configs/hf-job-larger-gpu.json` uses the `larger` Dataset Builder preset and
+a bounded `t4-small` GPU run. Deploy its checkpoint only after evaluation shows
+an improved Single-Sample Success result; do not treat retry-assisted success as
+the official score.
 
 Deploy the Proof Demo Space:
 

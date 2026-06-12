@@ -1,0 +1,11 @@
+{
+  "compute_profile": "larger_gpu",
+  "namespace": "Srini410",
+  "output_repo": "Srini410/dreamaze-artifacts",
+  "output_repo_type": "dataset",
+  "output_path_in_repo": "runs/diffusers-t4-larger-10000-20260612",
+  "model_output_repo": "Srini410/dreamaze-solver",
+  "model_output_path_in_repo": "checkpoints/diffusers-t4-larger-10000-20260612",
+  "training_seed": 410,
+  "evaluation_seed": 411
+}

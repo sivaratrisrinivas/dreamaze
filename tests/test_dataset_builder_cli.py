@@ -2,7 +2,11 @@ import json
 from dataclasses import replace
 
 from dreamaze.dataset import build_training_example, load_dataset_artifact_shard
-from dreamaze.dataset_cli import first_dataset_size_config, run_dataset_builder_cli
+from dreamaze.dataset_cli import (
+    first_dataset_size_config,
+    larger_dataset_config,
+    run_dataset_builder_cli,
+)
 
 
 def test_tiny_dataset_builder_cli_writes_artifacts_manifest_and_previews(
@@ -99,3 +103,14 @@ def test_first_dataset_size_config_uses_published_split_counts():
         "validation": 1_000,
         "test": 1_000,
     }
+
+
+def test_larger_dataset_config_uses_bounded_training_run_counts():
+    config = larger_dataset_config()
+
+    assert config.split_sizes == {
+        "train": 50_000,
+        "validation": 5_000,
+        "test": 5_000,
+    }
+    assert config.shard_size == 2048

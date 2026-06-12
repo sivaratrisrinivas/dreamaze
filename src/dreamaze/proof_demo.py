@@ -83,12 +83,16 @@ def iter_proof_demo_stream_events(
     solver = load_diffusers_solver_checkpoint(checkpoint_path=config.checkpoint_path)
     sampling_example = _sampling_example_from_training_example(example)
     total_steps = config.sampling_steps
+    total_frames = config.sampling_steps + 1
     yield {
         "type": "init",
         "renderedMaze": _numeric_grid(example.maze_condition.rendered_maze),
         "startCell": list(example.rendered_start_cell),
         "goalCell": list(example.rendered_goal_cell),
         "totalSteps": total_steps,
+        "totalFrames": total_frames,
+        "mazeFamily": example.maze_family.value,
+        "mazeSeed": example.seed,
     }
 
     generated_mask = None
@@ -120,6 +124,7 @@ def iter_proof_demo_stream_events(
         "type": "done",
         "validationStatus": "Valid Solution" if validation.valid else "Invalid Solution",
         "validationReason": None if validation.reason is None else validation.reason.value,
+        "finalStep": total_steps,
     }
 
 

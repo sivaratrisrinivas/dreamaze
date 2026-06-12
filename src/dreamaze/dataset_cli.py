@@ -38,6 +38,23 @@ def first_dataset_size_config(*, write_preview_images: bool = False) -> DatasetC
     return DatasetConfig(write_preview_images=write_preview_images)
 
 
+def larger_dataset_config(*, write_preview_images: bool = False) -> DatasetConfig:
+    return DatasetConfig(
+        split_sizes={
+            DatasetSplitName.TRAIN: 50_000,
+            DatasetSplitName.VALIDATION: 5_000,
+            DatasetSplitName.TEST: 5_000,
+        },
+        seed_ranges={
+            DatasetSplitName.TRAIN: range(0, 500_000),
+            DatasetSplitName.VALIDATION: range(500_000, 600_000),
+            DatasetSplitName.TEST: range(600_000, 700_000),
+        },
+        shard_size=2048,
+        write_preview_images=write_preview_images,
+    )
+
+
 def run_dataset_builder_cli(
     argv: Sequence[str] | None = None,
     *,
@@ -93,7 +110,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dreamaze-dataset")
     subparsers = parser.add_subparsers(dest="command")
     build_parser = subparsers.add_parser("build")
-    build_parser.add_argument("--preset", choices=("tiny", "first"), required=True)
+    build_parser.add_argument(
+        "--preset", choices=("tiny", "first", "larger"), required=True
+    )
     build_parser.add_argument("--output-dir", required=True)
     build_parser.add_argument("--preview-images", action="store_true")
     return parser
@@ -104,6 +123,8 @@ def _config_for_preset(*, preset: str, write_preview_images: bool) -> DatasetCon
         return tiny_dataset_config(write_preview_images=write_preview_images)
     if preset == "first":
         return first_dataset_size_config(write_preview_images=write_preview_images)
+    if preset == "larger":
+        return larger_dataset_config(write_preview_images=write_preview_images)
     raise ValueError(f"Unknown Dataset Builder preset: {preset}")
 
 

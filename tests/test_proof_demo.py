@@ -77,6 +77,9 @@ def test_proof_demo_stream_events_emit_init_frames_and_done(monkeypatch, tmp_pat
 
     assert events[0]["type"] == "init"
     assert events[0]["totalSteps"] == 2
+    assert events[0]["totalFrames"] == 3
+    assert events[0]["mazeFamily"] in {"kruskal", "wilson"}
+    assert events[0]["mazeSeed"] == 123
     assert events[1] == {
         "type": "frame",
         "step": 0,
@@ -85,6 +88,7 @@ def test_proof_demo_stream_events_emit_init_frames_and_done(monkeypatch, tmp_pat
     assert events[2]["type"] == "frame"
     assert events[-1]["type"] == "done"
     assert events[-1]["validationStatus"] in {"Valid Solution", "Invalid Solution"}
+    assert events[-1]["finalStep"] == 2
 
 
 def test_space_app_requires_checkpoint_at_startup(monkeypatch):

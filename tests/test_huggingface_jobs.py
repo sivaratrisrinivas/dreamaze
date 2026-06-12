@@ -42,6 +42,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
                 "output_repo": "Srini410/dreamaze-artifacts",
                 "output_repo_type": "dataset",
                 "output_path_in_repo": "runs/smoke",
+                "model_output_repo": "Srini410/dreamaze-solver",
+                "model_output_path_in_repo": "checkpoints/smoke",
                 "env": {"HF_XET_HIGH_PERFORMANCE": "1"},
             }
         )
@@ -75,6 +77,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
         output_repo="Srini410/dreamaze-artifacts",
         output_repo_type="dataset",
         output_path_in_repo="runs/smoke",
+        model_output_repo="Srini410/dreamaze-solver",
+        model_output_path_in_repo="checkpoints/smoke",
         env={"HF_XET_HIGH_PERFORMANCE": "1"},
     )
     assert command[:4] == ["hf", "jobs", "uv", "run"]
@@ -94,6 +98,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
     assert "2" in command
     assert "--output-repo" in command
     assert "Srini410/dreamaze-artifacts" in command
+    assert "--model-output-repo" in command
+    assert "Srini410/dreamaze-solver" in command
 
 
 def test_huggingface_job_config_can_select_best_gpu_profile(tmp_path):
@@ -123,6 +129,33 @@ def test_huggingface_job_config_can_select_best_gpu_profile(tmp_path):
     assert BEST_GPU_HARDWARE_FLAVOR in command
     assert "--device" in command
     assert "cuda" in command
+
+
+def test_huggingface_job_config_can_select_larger_gpu_profile(tmp_path):
+    config_path = tmp_path / "hf-job.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "compute_profile": "larger_gpu",
+                "output_repo": "Srini410/dreamaze-artifacts",
+                "model_output_repo": "Srini410/dreamaze-solver",
+            }
+        )
+    )
+
+    config = load_huggingface_job_config(config_path)
+    command = build_huggingface_job_command(config)
+
+    assert config.hardware_flavor == BEST_GPU_HARDWARE_FLAVOR
+    assert config.dataset_preset == "larger"
+    assert config.timeout == "8h"
+    assert config.max_train_steps == 10_000
+    assert config.checkpoint_every_steps == 1_000
+    assert config.retry_count == 0
+    assert "--dataset-preset" in command
+    assert "larger" in command
+    assert "--model-output-repo" in command
+    assert "Srini410/dreamaze-solver" in command
 
 
 def test_huggingface_job_cli_dry_run_prints_command_without_launching(tmp_path, capsys):

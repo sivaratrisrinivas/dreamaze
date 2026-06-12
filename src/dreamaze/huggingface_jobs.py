@@ -52,6 +52,24 @@ _BEST_GPU_PROFILE = {
 }
 
 
+_LARGER_GPU_PROFILE = {
+    "hardware_flavor": BEST_GPU_HARDWARE_FLAVOR,
+    "timeout": "8h",
+    "dataset_preset": "larger",
+    "batch_size": 16,
+    "sampling_steps": 32,
+    "max_train_steps": 10_000,
+    "checkpoint_every_steps": 1_000,
+    "learning_rate": 1e-4,
+    "device": "cuda",
+    "precision": "float16",
+    "num_workers": 0,
+    "retry_count": 0,
+    "eval_split": "validation",
+    "env": {"HF_XET_HIGH_PERFORMANCE": "1"},
+}
+
+
 @dataclass(frozen=True)
 class HuggingFaceJobConfig:
     hardware_flavor: str = "cpu-basic"
@@ -80,6 +98,8 @@ class HuggingFaceJobConfig:
     output_repo: str | None = None
     output_repo_type: str = "dataset"
     output_path_in_repo: str = "dreamaze-runs/latest"
+    model_output_repo: str | None = None
+    model_output_path_in_repo: str = "checkpoints/latest"
     env: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -121,6 +141,10 @@ def load_huggingface_job_config(path: str | Path) -> HuggingFaceJobConfig:
         output_path_in_repo=payload.get(
             "output_path_in_repo", _DEFAULTS["output_path_in_repo"]
         ),
+        model_output_repo=payload.get("model_output_repo"),
+        model_output_path_in_repo=payload.get(
+            "model_output_path_in_repo", "checkpoints/latest"
+        ),
         env=payload.get("env", _DEFAULTS["env"]),
     )
     _validate_huggingface_job_config(config)
@@ -131,12 +155,13 @@ def _resolve_compute_profile(payload: Mapping[str, object]) -> dict[str, object]
     profile = payload.get("compute_profile")
     if profile is None:
         return dict(payload)
-    if profile != "best_gpu":
+    if profile not in {"best_gpu", "larger_gpu"}:
         raise ValueError("Hugging Face job compute profile is invalid")
 
-    resolved: dict[str, object] = dict(_BEST_GPU_PROFILE)
+    profile_payload = _BEST_GPU_PROFILE if profile == "best_gpu" else _LARGER_GPU_PROFILE
+    resolved: dict[str, object] = dict(profile_payload)
     resolved.update(payload)
-    profile_env = dict(_BEST_GPU_PROFILE["env"])
+    profile_env = dict(profile_payload["env"])
     profile_env.update(payload.get("env", {}))
     resolved["env"] = profile_env
     return resolved
@@ -221,12 +246,23 @@ def _remote_script_args(config: HuggingFaceJobConfig) -> list[str]:
                 config.output_path_in_repo,
             ]
         )
+    if config.model_output_repo is not None:
+        args.extend(
+            [
+                "--model-output-repo",
+                config.model_output_repo,
+                "--model-output-path-in-repo",
+                config.model_output_path_in_repo,
+            ]
+        )
     return args
 
 
 def _validate_huggingface_job_config(config: HuggingFaceJobConfig) -> None:
-    if config.dataset_preset not in {None, "tiny", "first"}:
-        raise ValueError("Hugging Face job dataset preset must be tiny or first")
+    if config.dataset_preset not in {None, "tiny", "first", "larger"}:
+        raise ValueError(
+            "Hugging Face job dataset preset must be tiny, first, or larger"
+        )
     if config.output_repo_type not in {"dataset", "model", "space"}:
         raise ValueError("Hugging Face job output repo type is invalid")
     if config.batch_size < 1:

@@ -140,6 +140,10 @@ _Avoid_: Fake animation, decorative progress effect
 A visual playback of the **Diffusion Trajectory** that lets a user watch the **Conditional Diffusion Solver** refine its proposed **Solution Mask** step by step.
 _Avoid_: Static result only, pathfinding animation
 
+**Diffusion Trajectory Timeline**:
+An inspectable view of every intermediate **Solution Mask** in a **Diffusion Trajectory**, allowing a user to pause, compare, and select individual denoising steps.
+_Avoid_: Decorative animation strip, fake progress frames
+
 **Trained Solver Checkpoint**:
 A saved **Conditional Diffusion Solver** state produced by Dreamaze training and used for **Runtime Solving**.
 _Avoid_: Fixture weights, hand-tuned demo weights

@@ -13,7 +13,11 @@ import json
 import os
 from pathlib import Path
 
-from dreamaze.dataset_cli import first_dataset_size_config, tiny_dataset_config
+from dreamaze.dataset_cli import (
+    first_dataset_size_config,
+    larger_dataset_config,
+    tiny_dataset_config,
+)
 from dreamaze.dataset import write_dataset_artifacts
 from dreamaze.evaluation import EvaluationConfig, evaluate_conditional_diffusion_solver
 from dreamaze.training import TrainingConfig, train_conditional_diffusion_solver
@@ -30,11 +34,7 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dataset_preset is not None:
-        dataset_config = (
-            tiny_dataset_config()
-            if args.dataset_preset == "tiny"
-            else first_dataset_size_config()
-        )
+        dataset_config = _dataset_config_for_preset(args.dataset_preset)
         manifest = write_dataset_artifacts(
             config=dataset_config,
             output_dir=dataset_dir,
@@ -113,7 +113,7 @@ def main() -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dreamaze_hf_job.py")
-    parser.add_argument("--dataset-preset", choices=("tiny", "first"))
+    parser.add_argument("--dataset-preset", choices=("tiny", "first", "larger"))
     parser.add_argument("--dataset-dir", required=True)
     parser.add_argument("--checkpoint-dir", required=True)
     parser.add_argument("--evaluation-output", required=True)
@@ -138,6 +138,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="checkpoints/latest",
     )
     return parser
+
+
+def _dataset_config_for_preset(preset: str):
+    if preset == "tiny":
+        return tiny_dataset_config()
+    if preset == "first":
+        return first_dataset_size_config()
+    if preset == "larger":
+        return larger_dataset_config()
+    raise ValueError(f"Unknown Dataset Builder preset: {preset}")
 
 
 def _write_run_summary(
