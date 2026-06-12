@@ -42,6 +42,14 @@ def run_evaluation_cli(argv: Sequence[str] | None = None) -> int:
         "Mask overlap excluding endpoints: "
         f"{result.endpoint_inclusion['mask_overlap_excluding_endpoints']:.6f}"
     )
+    print(
+        "Start Cell raw value: "
+        f"{result.endpoint_raw_values['start_cell_raw_mean']:.6f}"
+    )
+    print(
+        "Goal Cell raw value: "
+        f"{result.endpoint_raw_values['goal_cell_raw_mean']:.6f}"
+    )
     if result.retry_success is not None:
         print(
             "Retry Success: "

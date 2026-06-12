@@ -11,7 +11,9 @@ from dreamaze.evaluation import (
     EvaluationConfig,
     evaluate_conditional_diffusion_solver,
     load_evaluation_config,
+    _aggregate_endpoint_raw_value_diagnostics,
     _endpoint_inclusion_payload,
+    _endpoint_raw_value_diagnostics,
     _mask_includes_cell,
     _mask_overlap_excluding_cells,
 )
@@ -110,7 +112,10 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     assert report["official_score"] == "single_sample_success"
     assert "endpoint_inclusion" in report
     assert "sampled_tensor_stats" in report
+    assert "endpoint_raw_values" in report
     assert "raw_mean" in report["sampled_tensor_stats"]
+    assert "start_cell_raw_mean" in report["endpoint_raw_values"]
+    assert "goal_cell_raw_mean" in report["endpoint_raw_values"]
     assert report["retry_success"]["excluded_from_official_score"] is True
 
 
@@ -176,6 +181,7 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     assert "failure_reason_counts" in report
     assert "endpoint_inclusion" in report
     assert "sampled_tensor_stats" in report
+    assert "endpoint_raw_values" in report
     cli_output = capsys.readouterr().out
     assert "Conditional Diffusion Solver evaluation complete" in cli_output
     assert "Official score: Single-Sample Success" in cli_output
@@ -183,6 +189,70 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     assert "Goal Cell inclusion:" in cli_output
     assert "Both endpoints inclusion:" in cli_output
     assert "Mask overlap excluding endpoints:" in cli_output
+    assert "Start Cell raw value:" in cli_output
+    assert "Goal Cell raw value:" in cli_output
+
+
+def test_endpoint_raw_value_diagnostics_compare_endpoints_to_label_and_background():
+    diagnostics = _endpoint_raw_value_diagnostics(
+        raw_values=(
+            (0.9, -0.2, 0.1),
+            (-0.8, 0.4, 0.7),
+        ),
+        label_mask=(
+            (1, 0, 0),
+            (0, 1, 1),
+        ),
+        start_cell=(0, 0),
+        goal_cell=(1, 2),
+    )
+
+    assert diagnostics.start_cell_raw_value == 0.9
+    assert diagnostics.goal_cell_raw_value == 0.7
+    assert diagnostics.label_cell_raw_mean == pytest.approx((0.9 + 0.4 + 0.7) / 3)
+    assert diagnostics.label_cell_raw_min == 0.4
+    assert diagnostics.label_cell_raw_max == 0.9
+    assert diagnostics.non_label_cell_raw_mean == pytest.approx((-0.2 + 0.1 - 0.8) / 3)
+    assert diagnostics.non_label_cell_raw_min == -0.8
+    assert diagnostics.non_label_cell_raw_max == 0.1
+    assert diagnostics.start_cell_descending_rank == 1
+    assert diagnostics.goal_cell_descending_rank == 2
+    assert diagnostics.start_cell_percentile == 1.0
+    assert diagnostics.goal_cell_percentile == pytest.approx(5 / 6)
+
+
+def test_aggregate_endpoint_raw_value_diagnostics_reports_means_and_extremes():
+    diagnostics = [
+        _endpoint_raw_value_diagnostics(
+            raw_values=((0.2, -0.5), (0.7, -0.1)),
+            label_mask=((1, 0), (1, 0)),
+            start_cell=(0, 0),
+            goal_cell=(1, 0),
+        ),
+        _endpoint_raw_value_diagnostics(
+            raw_values=((-0.3, 0.4), (0.8, 0.0)),
+            label_mask=((1, 0), (0, 1)),
+            start_cell=(0, 0),
+            goal_cell=(1, 1),
+        ),
+    ]
+
+    payload = _aggregate_endpoint_raw_value_diagnostics(diagnostics)
+
+    assert payload["start_cell_raw_mean"] == pytest.approx(-0.05)
+    assert payload["start_cell_raw_min"] == -0.3
+    assert payload["start_cell_raw_max"] == 0.2
+    assert payload["goal_cell_raw_mean"] == pytest.approx(0.35)
+    assert payload["goal_cell_raw_min"] == 0.0
+    assert payload["goal_cell_raw_max"] == 0.7
+    assert payload["label_cell_raw_mean"] == pytest.approx(0.15)
+    assert payload["label_cell_raw_min"] == -0.3
+    assert payload["label_cell_raw_max"] == 0.7
+    assert payload["non_label_cell_raw_mean"] == pytest.approx(0.15)
+    assert payload["non_label_cell_raw_min"] == -0.5
+    assert payload["non_label_cell_raw_max"] == 0.8
+    assert payload["start_cell_descending_rank_mean"] == pytest.approx(3.0)
+    assert payload["goal_cell_descending_rank_mean"] == pytest.approx(2.0)
 
 
 def test_endpoint_inclusion_payload_reports_separate_endpoint_rates():

@@ -69,6 +69,7 @@ class EvaluationResult:
     mask_overlap: float
     endpoint_inclusion: Mapping[str, float | int]
     sampled_tensor_stats: Mapping[str, float | int]
+    endpoint_raw_values: Mapping[str, float | int]
     failure_reason_counts: Mapping[str, int]
 
     def to_json(self) -> str:
@@ -93,6 +94,7 @@ class EvaluationResult:
             "mask_overlap": self.mask_overlap,
             "endpoint_inclusion": dict(self.endpoint_inclusion),
             "sampled_tensor_stats": dict(self.sampled_tensor_stats),
+            "endpoint_raw_values": dict(self.endpoint_raw_values),
             "failure_reason_counts": dict(self.failure_reason_counts),
         }
         if self.retry_success is not None:
@@ -131,6 +133,23 @@ class SampledTensorStats:
 class SampledSolutionMask:
     mask: tuple[tuple[bool, ...], ...]
     tensor_stats: SampledTensorStats
+    raw_values: tuple[tuple[float, ...], ...]
+
+
+@dataclass(frozen=True)
+class EndpointRawValueDiagnostics:
+    start_cell_raw_value: float
+    goal_cell_raw_value: float
+    label_cell_raw_mean: float
+    label_cell_raw_min: float
+    label_cell_raw_max: float
+    non_label_cell_raw_mean: float
+    non_label_cell_raw_min: float
+    non_label_cell_raw_max: float
+    start_cell_descending_rank: int
+    goal_cell_descending_rank: int
+    start_cell_percentile: float
+    goal_cell_percentile: float
 
 
 @dataclass(frozen=True)
@@ -165,6 +184,7 @@ def evaluate_conditional_diffusion_solver(
     goal_cell_included_count = 0
     both_endpoints_included_count = 0
     sampled_tensor_stats: list[SampledTensorStats] = []
+    endpoint_raw_value_diagnostics: list[EndpointRawValueDiagnostics] = []
 
     for index, example in enumerate(examples):
         first_sample = sample_conditional_diffusion_solution_mask_with_stats(
@@ -175,17 +195,25 @@ def evaluate_conditional_diffusion_solver(
         )
         first_mask = first_sample.mask
         sampled_tensor_stats.append(first_sample.tensor_stats)
+        rendered_start_cell = _rendered_cell(example.start_cell)
+        rendered_goal_cell = _rendered_cell(example.goal_cell)
+        endpoint_raw_value_diagnostics.append(
+            _endpoint_raw_value_diagnostics(
+                raw_values=first_sample.raw_values,
+                label_mask=example.solution_mask,
+                start_cell=rendered_start_cell,
+                goal_cell=rendered_goal_cell,
+            )
+        )
         first_result = validate_solution_mask(
             grid_maze=_bool_grid(example.maze_condition),
             solution_mask=first_mask,
-            start_cell=_rendered_cell(example.start_cell),
-            goal_cell=_rendered_cell(example.goal_cell),
+            start_cell=rendered_start_cell,
+            goal_cell=rendered_goal_cell,
         )
         mask_overlaps.append(
             _mask_overlap(proposed_mask=first_mask, label_mask=example.solution_mask)
         )
-        rendered_start_cell = _rendered_cell(example.start_cell)
-        rendered_goal_cell = _rendered_cell(example.goal_cell)
         start_cell_included = _mask_includes_cell(first_mask, rendered_start_cell)
         goal_cell_included = _mask_includes_cell(first_mask, rendered_goal_cell)
         if start_cell_included:
@@ -253,6 +281,9 @@ def evaluate_conditional_diffusion_solver(
             body_mask_overlaps=body_mask_overlaps,
         ),
         sampled_tensor_stats=_aggregate_sampled_tensor_stats(sampled_tensor_stats),
+        endpoint_raw_values=_aggregate_endpoint_raw_value_diagnostics(
+            endpoint_raw_value_diagnostics
+        ),
         failure_reason_counts=dict(sorted(failure_reasons.items())),
     )
 
@@ -507,6 +538,10 @@ def _sampling_condition_tensor(*, torch, example, device, dtype, sample_size):
 
 def _tensor_to_mask_sample(tensor, rows: int, columns: int) -> SampledSolutionMask:
     cropped = tensor.detach().float().cpu()[0, 0, :rows, :columns]
+    raw_values = tuple(
+        tuple(float(value) for value in row.tolist())
+        for row in cropped
+    )
     mask = tuple(
         tuple(bool(value >= 0.0) for value in row.tolist())
         for row in cropped
@@ -515,6 +550,7 @@ def _tensor_to_mask_sample(tensor, rows: int, columns: int) -> SampledSolutionMa
     total_cells = rows * columns
     return SampledSolutionMask(
         mask=mask,
+        raw_values=raw_values,
         tensor_stats=SampledTensorStats(
             raw_min=float(cropped.min()),
             raw_max=float(cropped.max()),
@@ -553,6 +589,128 @@ def _aggregate_sampled_tensor_stats(
         "marked_count_mean": sum(item.marked_count for item in stats) / len(stats),
         "total_cells": sum(item.total_cells for item in stats),
     }
+
+
+def _endpoint_raw_value_diagnostics(
+    *,
+    raw_values: tuple[tuple[float, ...], ...],
+    label_mask: tuple[tuple[int, ...], ...],
+    start_cell: tuple[int, int],
+    goal_cell: tuple[int, int],
+) -> EndpointRawValueDiagnostics:
+    label_values: list[float] = []
+    non_label_values: list[float] = []
+    all_values: list[float] = []
+
+    for row_index, row in enumerate(raw_values):
+        for column_index, raw_value in enumerate(row):
+            value = float(raw_value)
+            all_values.append(value)
+            if label_mask[row_index][column_index]:
+                label_values.append(value)
+            else:
+                non_label_values.append(value)
+
+    start_value = _raw_value_at_cell(raw_values, start_cell)
+    goal_value = _raw_value_at_cell(raw_values, goal_cell)
+    return EndpointRawValueDiagnostics(
+        start_cell_raw_value=start_value,
+        goal_cell_raw_value=goal_value,
+        label_cell_raw_mean=_mean(label_values),
+        label_cell_raw_min=min(label_values) if label_values else 0.0,
+        label_cell_raw_max=max(label_values) if label_values else 0.0,
+        non_label_cell_raw_mean=_mean(non_label_values),
+        non_label_cell_raw_min=min(non_label_values) if non_label_values else 0.0,
+        non_label_cell_raw_max=max(non_label_values) if non_label_values else 0.0,
+        start_cell_descending_rank=_descending_rank(all_values, start_value),
+        goal_cell_descending_rank=_descending_rank(all_values, goal_value),
+        start_cell_percentile=_percentile(all_values, start_value),
+        goal_cell_percentile=_percentile(all_values, goal_value),
+    )
+
+
+def _aggregate_endpoint_raw_value_diagnostics(
+    diagnostics: list[EndpointRawValueDiagnostics],
+) -> Mapping[str, float | int]:
+    if not diagnostics:
+        return {
+            "start_cell_raw_mean": 0.0,
+            "start_cell_raw_min": 0.0,
+            "start_cell_raw_max": 0.0,
+            "goal_cell_raw_mean": 0.0,
+            "goal_cell_raw_min": 0.0,
+            "goal_cell_raw_max": 0.0,
+            "label_cell_raw_mean": 0.0,
+            "label_cell_raw_min": 0.0,
+            "label_cell_raw_max": 0.0,
+            "non_label_cell_raw_mean": 0.0,
+            "non_label_cell_raw_min": 0.0,
+            "non_label_cell_raw_max": 0.0,
+            "start_cell_descending_rank_mean": 0.0,
+            "goal_cell_descending_rank_mean": 0.0,
+            "start_cell_percentile_mean": 0.0,
+            "goal_cell_percentile_mean": 0.0,
+        }
+
+    return {
+        "start_cell_raw_mean": _mean(
+            [item.start_cell_raw_value for item in diagnostics]
+        ),
+        "start_cell_raw_min": min(item.start_cell_raw_value for item in diagnostics),
+        "start_cell_raw_max": max(item.start_cell_raw_value for item in diagnostics),
+        "goal_cell_raw_mean": _mean(
+            [item.goal_cell_raw_value for item in diagnostics]
+        ),
+        "goal_cell_raw_min": min(item.goal_cell_raw_value for item in diagnostics),
+        "goal_cell_raw_max": max(item.goal_cell_raw_value for item in diagnostics),
+        "label_cell_raw_mean": _mean(
+            [item.label_cell_raw_mean for item in diagnostics]
+        ),
+        "label_cell_raw_min": min(item.label_cell_raw_min for item in diagnostics),
+        "label_cell_raw_max": max(item.label_cell_raw_max for item in diagnostics),
+        "non_label_cell_raw_mean": _mean(
+            [item.non_label_cell_raw_mean for item in diagnostics]
+        ),
+        "non_label_cell_raw_min": min(
+            item.non_label_cell_raw_min for item in diagnostics
+        ),
+        "non_label_cell_raw_max": max(
+            item.non_label_cell_raw_max for item in diagnostics
+        ),
+        "start_cell_descending_rank_mean": _mean(
+            [item.start_cell_descending_rank for item in diagnostics]
+        ),
+        "goal_cell_descending_rank_mean": _mean(
+            [item.goal_cell_descending_rank for item in diagnostics]
+        ),
+        "start_cell_percentile_mean": _mean(
+            [item.start_cell_percentile for item in diagnostics]
+        ),
+        "goal_cell_percentile_mean": _mean(
+            [item.goal_cell_percentile for item in diagnostics]
+        ),
+    }
+
+
+def _raw_value_at_cell(
+    raw_values: tuple[tuple[float, ...], ...], cell: tuple[int, int]
+) -> float:
+    row, column = cell
+    return float(raw_values[row][column])
+
+
+def _descending_rank(values: list[float], value: float) -> int:
+    return 1 + sum(1 for candidate in values if candidate > value)
+
+
+def _percentile(values: list[float], value: float) -> float:
+    if not values:
+        return 0.0
+    return sum(1 for candidate in values if candidate <= value) / len(values)
+
+
+def _mean(values: list[float | int]) -> float:
+    return sum(values) / len(values) if values else 0.0
 
 
 def _mask_overlap(
