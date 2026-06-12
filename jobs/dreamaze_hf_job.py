@@ -1,6 +1,6 @@
 # /// script
 # dependencies = [
-#   "dreamaze @ git+https://github.com/sivaratrisrinivas/dreamaze.git",
+#   "git+https://github.com/sivaratrisrinivas/dreamaze.git",
 #   "diffusers>=0.36",
 #   "huggingface-hub>=0.36",
 #   "safetensors>=0.4",

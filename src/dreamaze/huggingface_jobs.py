@@ -5,9 +5,7 @@ from typing import Mapping
 
 
 _DEFAULT_SCRIPT_PATH = "jobs/dreamaze_hf_job.py"
-_DEFAULT_PACKAGE = (
-    "dreamaze @ git+https://github.com/sivaratrisrinivas/dreamaze.git"
-)
+_DEFAULT_PACKAGE = "git+https://github.com/sivaratrisrinivas/dreamaze.git"
 BEST_GPU_HARDWARE_FLAVOR = "t4-small"
 
 
