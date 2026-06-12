@@ -174,6 +174,83 @@ Validation Reason failure counts. Evaluation samples Solution Masks from the
 checkpoint and validates them; it does not use a classical solver to repair or
 replace Runtime Solving.
 
+## Hugging Face Jobs
+
+Training and evaluation can be launched through Hugging Face Jobs without
+assuming the user's local GPU is available. The local CLI builds an `hf jobs uv
+run` command around a remote-ready UV script, and `--dry-run` prints the command
+without starting paid compute:
+
+```json
+{
+  "hardware_flavor": "cpu-basic",
+  "timeout": "10m",
+  "python": "3.12",
+  "dataset_preset": "tiny",
+  "dataset_dir": "/tmp/dreamaze/dataset",
+  "checkpoint_dir": "/tmp/dreamaze/checkpoints",
+  "evaluation_output": "/tmp/dreamaze/evaluation.json",
+  "batch_size": 1,
+  "sampling_steps": 2,
+  "max_train_steps": 1,
+  "checkpoint_every_steps": 1,
+  "learning_rate": 0.01,
+  "training_seed": 7,
+  "evaluation_seed": 11,
+  "retry_count": 1,
+  "eval_split": "validation",
+  "device": "cpu",
+  "precision": "float32",
+  "num_workers": 0
+}
+```
+
+```bash
+dreamaze-hf-job --config ./hf-job.json --dry-run
+```
+
+Remove `--dry-run` to submit the job with the installed `hf` CLI. Authenticate
+first with `hf auth login`; artifact upload requires a token with write access.
+When `"output_repo"` is set, the launch command passes `HF_TOKEN` as a Hugging
+Face Jobs secret and the remote script uploads the run directory:
+
+```json
+{
+  "output_repo": "your-name/dreamaze-artifacts",
+  "output_repo_type": "dataset",
+  "output_path_in_repo": "runs/tiny-smoke"
+}
+```
+
+Start with `hardware_flavor` set to `cpu-basic`, `dataset_preset` set to
+`tiny`, and `max_train_steps` set to `1`. Scale to GPU flavors such as
+`t4-small`, larger batch sizes, more sampling steps, longer checkpoint cadence,
+and the `first` Dataset Artifact preset only after the dry-run command and tiny
+remote smoke job behave as expected.
+
+For the highest-end GPU path exposed by the installed `hf` CLI, use the
+`best_gpu` compute profile. It resolves to the `h100x8` Hugging Face Jobs
+hardware flavor, CUDA device settings, float16 precision, the First Dataset
+Size preset, and longer training defaults:
+
+```json
+{
+  "compute_profile": "best_gpu",
+  "output_repo": "your-name/dreamaze-artifacts",
+  "output_repo_type": "dataset",
+  "output_path_in_repo": "runs/best-gpu"
+}
+```
+
+```bash
+dreamaze-hf-job --config ./hf-best-gpu.json --dry-run
+```
+
+If the Hugging Face backend rejects `h100x8` for the current account, region, or
+quota, set `"hardware_flavor": "a100x8"` in the same config as the next-best
+fallback. Keep `--dry-run` until the command, output repo, and expected spend
+are checked.
+
 Run the test suite with:
 
 ```bash
