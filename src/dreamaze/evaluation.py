@@ -188,7 +188,36 @@ def sample_conditional_diffusion_solution_mask(
 ) -> tuple[tuple[bool, ...], ...]:
     if sampling_steps < 1:
         raise ValueError("Conditional Diffusion Solver sampling steps must be positive")
-    return _sample_solution_mask(
+    traj = _sample_solution_mask_trajectory(
+        example=_EvaluationExampleArrays(
+            maze_condition=example.maze_condition,
+            solution_mask=(),
+            start_cell=example.start_cell,
+            goal_cell=example.goal_cell,
+        ),
+        weights=weights,
+        sampling_steps=sampling_steps,
+        rng=rng,
+    )
+    return traj[-1]
+
+
+def sample_conditional_diffusion_solution_mask_trajectory(
+    *,
+    example: ConditionalDiffusionSamplingExample,
+    weights: Mapping[str, float],
+    sampling_steps: int,
+    rng: Random,
+) -> list[tuple[tuple[bool, ...], ...]]:
+    """Return the full denoising trajectory for real-time visualization.
+
+    Index 0 is the initial pure noise mask.
+    The final element (index == sampling_steps) is the clean sampled Solution Mask.
+    Length is always sampling_steps + 1.
+    """
+    if sampling_steps < 1:
+        raise ValueError("Conditional Diffusion Solver sampling steps must be positive")
+    return _sample_solution_mask_trajectory(
         example=_EvaluationExampleArrays(
             maze_condition=example.maze_condition,
             solution_mask=(),
@@ -244,18 +273,27 @@ def _retry_finds_valid_solution(
     return False
 
 
-def _sample_solution_mask(
+def _sample_solution_mask_trajectory(
     *,
     example: _EvaluationExampleArrays,
     weights: Mapping[str, float],
     sampling_steps: int,
     rng: Random,
-) -> tuple[tuple[bool, ...], ...]:
+) -> list[tuple[tuple[bool, ...], ...]]:
+    """Internal: full trajectory of the reverse diffusion process.
+
+    Captures the mask state after initialization (noise) and after each
+    reverse timestep update. This powers the Proof Demo real-time solving viz.
+    """
     current_mask = tuple(
         tuple(rng.choice((0.0, 1.0)) for _ in row) for row in example.maze_condition
     )
     start_cell = _rendered_cell(example.start_cell)
     goal_cell = _rendered_cell(example.goal_cell)
+
+    intermediates: list[tuple[tuple[bool, ...], ...]] = [
+        tuple(tuple(bool(value) for value in row) for row in current_mask)
+    ]
 
     for timestep in range(sampling_steps, 0, -1):
         timestep_feature = timestep / sampling_steps
@@ -276,8 +314,26 @@ def _sample_solution_mask(
                 )
             next_mask.append(tuple(next_row))
         current_mask = tuple(next_mask)
+        bool_mask = tuple(tuple(bool(value) for value in row) for row in current_mask)
+        intermediates.append(bool_mask)
 
-    return tuple(tuple(bool(value) for value in row) for row in current_mask)
+    return intermediates
+
+
+def _sample_solution_mask(
+    *,
+    example: _EvaluationExampleArrays,
+    weights: Mapping[str, float],
+    sampling_steps: int,
+    rng: Random,
+) -> tuple[tuple[bool, ...], ...]:
+    traj = _sample_solution_mask_trajectory(
+        example=example,
+        weights=weights,
+        sampling_steps=sampling_steps,
+        rng=rng,
+    )
+    return traj[-1]
 
 
 def _load_evaluation_examples(

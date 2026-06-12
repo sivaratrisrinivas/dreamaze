@@ -26,6 +26,8 @@ from dreamaze.evaluation import (
     EvaluationResult,
     evaluate_conditional_diffusion_solver,
     load_evaluation_config,
+    sample_conditional_diffusion_solution_mask,
+    sample_conditional_diffusion_solution_mask_trajectory,
 )
 from dreamaze.training import (
     TrainingConfig,
@@ -68,6 +70,8 @@ __all__ = [
     "evaluate_conditional_diffusion_solver",
     "load_evaluation_config",
     "load_training_config",
+    "sample_conditional_diffusion_solution_mask",
+    "sample_conditional_diffusion_solution_mask_trajectory",
     "train_conditional_diffusion_solver",
     "validate_solution_mask",
 ]

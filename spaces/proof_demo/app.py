@@ -20,8 +20,11 @@ except ImportError:
 
     spaces = _LocalSpaces()
 
+import random as _random
+import time
+
 from dreamaze.dataset import MazeFamily
-from dreamaze.proof_demo import ProofDemoConfig, run_proof_demo
+from dreamaze.proof_demo import ProofDemoConfig, build_diffusion_viz_html, run_proof_demo
 
 
 def run_demo(
@@ -88,95 +91,127 @@ def _run_demo_for_gradio(
     )
 
 
-_run_demo_for_gradio = spaces.GPU(duration=30)(_run_demo_for_gradio)
+def _safe_gpu_decorate(fn, duration=30):
+    try:
+        return spaces.GPU(duration=duration)(fn)
+    except Exception:
+        # In test / local envs the spaces stub or package may not provide GPU.
+        # The plain fn is still callable for the python-level run_demo / run_automated_demo.
+        return fn
+
+
+_run_demo_for_gradio = _safe_gpu_decorate(_run_demo_for_gradio)
+
+
+# --- New automated path: zero config, one button, real-time diffusion viz ---
+
+
+def run_automated_demo() -> str:
+    """Pick a fresh Grid Maze, run the Conditional Diffusion Solver (single sample),
+    capture the full denoising trajectory, validate strictly, and return a
+    self-contained HTML/CSS/JS player that animates the solving steps live in
+    the browser for an intuitive "watch it think" experience.
+    """
+    checkpoint_path = os.environ.get("DREAMAZE_CHECKPOINT_PATH")
+    ckpt = Path(checkpoint_path) if checkpoint_path else None
+
+    # Always automate: fresh maze + fixed high-quality sampling steps for the viz.
+    # Using time + random gives a different Training Example (and stochastic sample)
+    # on every play / page load. This demonstrates genuine Runtime Solving.
+    tseed = int(time.time() * 1000) % 100000
+    rng = _random.Random(tseed)
+    family = rng.choice([MazeFamily.KRUSKAL, MazeFamily.WILSON])
+    # Reasonable seed range keeps generated mazes interesting without trivial cases.
+    maze_seed = rng.randrange(2000, 88000)
+
+    STEPS = 16  # Enough frames for a satisfying visible refinement animation.
+
+    result = run_proof_demo(
+        ProofDemoConfig(
+            checkpoint_path=ckpt,
+            maze_family=family,
+            maze_seed=maze_seed,
+            sampling_steps=STEPS,
+            retry_count=0,
+            debug_reveal=False,
+            capture_trajectory=True,
+        )
+    )
+
+    # The player is the entire "result" the user sees. It is fully self-contained.
+    player_html = build_diffusion_viz_html(
+        result,
+        maze_family=family,
+        maze_seed=maze_seed,
+        sampling_steps_used=STEPS,
+    )
+    return player_html
+
+
+_run_automated_for_gradio = _safe_gpu_decorate(run_automated_demo)
 
 
 def build_app() -> Any:
+    """Minimal, intuitive Proof Demo UI.
+
+    The user sees only a clear call-to-action button and the result area.
+    All configuration (family, seed, sampling steps, retries, debug) is fully
+    automated inside run_automated_demo. The result uses custom HTML/CSS/JS
+    (allowed per requirements) to show the diffusion trajectory animating
+    in real time.
+    """
     import gradio as gr
 
-    with gr.Blocks(title="Dreamaze Proof Demo") as demo:
-        gr.Markdown("# Dreamaze Proof Demo")
-        with gr.Row():
-            with gr.Column(scale=1):
-                maze_family = gr.Dropdown(
-                    choices=[MazeFamily.KRUSKAL.value, MazeFamily.WILSON.value],
-                    value=MazeFamily.KRUSKAL.value,
-                    label="Maze Family",
-                )
-                maze_seed = gr.Number(value=0, precision=0, label="Maze Seed")
-                sampling_steps = gr.Slider(
-                    minimum=1,
-                    maximum=32,
-                    value=8,
-                    step=1,
-                    label="Sampling Steps",
-                )
-                retry_count = gr.Slider(
-                    minimum=0,
-                    maximum=5,
-                    value=0,
-                    step=1,
-                    label="Sampling Retry Count",
-                )
-                debug_reveal = gr.Checkbox(value=False, label="Debug Reveal")
-                run_button = gr.Button("Run Solver", variant="primary")
-            with gr.Column(scale=2):
-                validation_status = gr.Textbox(
-                    label="Valid Solution Status", interactive=False
-                )
-                validation_reason = gr.Textbox(
-                    label="Validation Reason", interactive=False
-                )
-                sampling_summary = gr.Textbox(
-                    label="Sampling Summary", interactive=False
-                )
+    # Light custom CSS to make the primary action obvious and the demo feel clean.
+    custom_css = """
+    .dm-play-button button {
+        font-size: 1.05rem !important;
+        padding: 14px 32px !important;
+        border-radius: 8px !important;
+    }
+    .dm-result .gr-html { border: none !important; background: transparent !important; }
+    """
 
-        with gr.Row():
-            rendered_maze = gr.HTML(label="Rendered Maze")
-            generated_solution_mask = gr.HTML(label="Generated Solution Mask")
-        with gr.Row():
-            training_label = gr.HTML(label="Training Label")
-            difference = gr.HTML(label="Debug Difference")
-
-        run_button.click(
-            fn=_run_demo_for_gradio,
-            inputs=[
-                maze_family,
-                maze_seed,
-                sampling_steps,
-                retry_count,
-                debug_reveal,
-            ],
-            outputs=[
-                rendered_maze,
-                generated_solution_mask,
-                validation_status,
-                validation_reason,
-                sampling_summary,
-                training_label,
-                difference,
-            ],
-            api_name="run_solver",
+    with gr.Blocks(title="Dreamaze Proof Demo", css=custom_css) as demo:
+        gr.Markdown(
+            "# Dreamaze\n"
+            "**A tiny Conditional Diffusion Solver learns to solve perfect Grid Mazes.**\n\n"
+            "Click the button to generate a fresh maze and watch the model solve it. "
+            "The Solution Mask is produced entirely by the learned model (no classical pathfinding at runtime). "
+            "Graph Validation then decides if it is a Valid Solution."
         )
+
+        with gr.Row():
+            with gr.Column():
+                # The ONLY interactive element the end-user needs.
+                play_btn = gr.Button(
+                    "▶ Solve New Maze — Watch the diffusion solver",
+                    variant="primary",
+                    elem_classes=["dm-play-button"],
+                )
+
+        # The entire result (maze + animated real-time solving + verdict) lives here.
+        # The returned HTML block is rich, self-contained, and intuitive.
+        result_area = gr.HTML(
+            value="<div style='padding:12px;color:#64748b;font-size:0.95em'>Click the button above to run the Conditional Diffusion Solver and see the real-time denoising trajectory.</div>",
+            elem_classes=["dm-result"],
+        )
+
+        play_btn.click(
+            fn=_run_automated_for_gradio,
+            inputs=[],
+            outputs=[result_area],
+            api_name="solve_new_maze",
+        )
+
+        # Populate an initial result on load so the page immediately shows the button + a result.
+        # (Still just the automated path — user never sees or sets any config.)
         demo.load(
-            fn=_run_demo_for_gradio,
-            inputs=[
-                maze_family,
-                maze_seed,
-                sampling_steps,
-                retry_count,
-                debug_reveal,
-            ],
-            outputs=[
-                rendered_maze,
-                generated_solution_mask,
-                validation_status,
-                validation_reason,
-                sampling_summary,
-                training_label,
-                difference,
-            ],
+            fn=_run_automated_for_gradio,
+            inputs=[],
+            outputs=[result_area],
         )
+
     return demo
 
 

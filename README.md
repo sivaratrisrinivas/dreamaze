@@ -55,6 +55,19 @@ Diffusion Solver training tracer bullet, evaluation, Hugging Face Jobs launch
 packaging, and a Hugging Face Spaces Proof Demo target. The Dataset Builder can
 persist those splits as sharded Dataset Artifacts with a resumable manifest.
 
+The Proof Demo has been updated with a fully automated, intuitive user
+experience: visitors see only a single prominent "Solve New Maze" button and
+the result. All previous configuration (maze family, seed, sampling steps,
+retries, debug reveal) is chosen internally with sensible defaults. The result
+area now features a rich self-contained real-time visualization (built with
+embedded HTML, CSS, and JavaScript) that plays back the Conditional Diffusion
+Solver's full denoising trajectory step-by-step. This lets users literally
+watch the diffusion process solve the maze from initial noise to the final
+Solution Mask before Graph Validation is applied. New supporting library
+APIs (`sample_conditional_diffusion_solution_mask_trajectory` and
+`build_diffusion_viz_html`) power the animated player while the core Runtime
+Solving and strict validation logic remain unchanged.
+
 The validator checks a submitted mask without creating, filling, repairing, or replacing the path. It accepts a mask only when the marked cells form one continuous 4-Way Movement route from the Start Cell to the Goal Cell through open Grid Maze cells.
 
 Invalid masks return a structured Validation Reason:
@@ -261,7 +274,28 @@ outputs are displayed as invalid with their Validation Reason; the Space does
 not use DFS, BFS, A*, or any other classical pathfinding fallback to repair or
 replace Runtime Solving.
 
-The Space can run from a trained checkpoint by setting:
+The public demo UI has been deliberately simplified and automated per user
+request: end users see **only a single prominent "Solve New Maze" (or "Play")
+button and the result area**. All configuration is handled internally with
+good defaults (e.g. 16 sampling steps for visible animation length, fresh
+varied Grid Mazes on every invocation via randomized seeds within safe ranges,
+single-sample execution for the official score, debug reveal disabled). This
+keeps the experience extremely intuitive while still exercising the full
+learned solver on live Runtime Solving.
+
+The result is a rich, self-contained visualization built with embedded
+HTML/CSS/JavaScript. It renders the input Rendered Maze (with Start Cell in
+green and Goal Cell in red) and then auto-plays a smooth animation of the
+Conditional Diffusion Solver's complete denoising trajectory. Viewers watch
+the Solution Mask emerge in real time from pure noise through iterative
+refinement steps until the final mask is produced. A step counter, replay
+control, legend, and prominent verdict ("Valid Solution" or "Invalid Solution"
+plus the exact Validation Reason) are included. The animation uses the exact
+intermediate states from the solver (exposed via the new
+`sample_conditional_diffusion_solution_mask_trajectory` helper) so it
+faithfully represents the diffusion process rather than a post-hoc effect.
+
+The Space can still run from a trained checkpoint by setting:
 
 ```bash
 DREAMAZE_CHECKPOINT_PATH=/path/to/checkpoint-step-000001.json
@@ -269,7 +303,9 @@ DREAMAZE_CHECKPOINT_PATH=/path/to/checkpoint-step-000001.json
 
 If that variable is unset, the demo uses the configured tiny fixture checkpoint
 so the browser UI and validation states can be smoke-tested before a real model
-artifact is uploaded.
+artifact is uploaded. The underlying `ProofDemoConfig` / `run_proof_demo` /
+`build_diffusion_viz_html` library APIs remain fully configurable for tests,
+CI, and advanced usage.
 
 The first public deployment is:
 
@@ -321,14 +357,17 @@ execution is preferable to predictable latency. Move to paid dedicated GPU
 hardware only when the trained checkpoint needs lower latency or more reliable
 capacity, because the Space owner is billed while that hardware is attached.
 
-Manual browser smoke checks:
+Manual browser smoke checks (fully automated Proof Demo UI):
 
-- Load the Space and confirm the Rendered Maze shows Start Cell and Goal Cell.
-- Click Run Solver and confirm the generated Solution Mask appears.
-- Confirm Valid Solution status and Validation Reason update together.
-- Enable Debug Reveal and confirm Training Label and Debug Difference appear.
-- Set Sampling Retry Count above zero and confirm it is labeled separately from
-  Single-Sample Success and excluded from the official score.
+- Load the public Space (https://huggingface.co/spaces/Srini410/dreamaze-proof-demo). You should see only a prominent "Solve New Maze" button plus an initial result (no configuration controls, sliders, dropdowns, or checkboxes are exposed to the visitor).
+- Click the button and confirm a fresh Grid Maze appears together with an animated real-time playback of the Conditional Diffusion Solver's denoising trajectory (the Solution Mask claim evolving from noise over the refinement steps via embedded HTML/CSS/JS). The animation starts automatically at a comfortable visible pace.
+- Confirm the animation ends on a final mask, a clear verdict using the project's exact terms ("Valid Solution" / "Invalid Solution"), and the precise Validation Reason when applicable. Everything is produced by pure model sampling + Graph Validation with no classical solver involved.
+- Click again (or refresh): a different maze + independent single-sample solve should appear. Internal automation selects Maze Family and seed for variety on every invocation while keeping the official result as Single-Sample Success.
+
+New library surface area supporting the demo (exported from the package):
+
+- `sample_conditional_diffusion_solution_mask_trajectory(...)` — returns the full list of intermediate masks from the custom reverse diffusion process (initial noise through final clean mask).
+- `build_diffusion_viz_html(result, ...)` — given a `ProofDemoResult` that captured the trajectory (plus optional family/seed metadata), returns a complete self-contained HTML block with CSS and JS that renders and animates the solving process.
 
 Run the test suite with:
 
