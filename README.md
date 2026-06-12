@@ -246,10 +246,10 @@ Start with `hardware_flavor` set to `cpu-basic`, `dataset_preset` set to
 and the `first` Dataset Artifact preset only after the dry-run command and tiny
 remote smoke job behave as expected.
 
-For the highest-end GPU path exposed by Hugging Face Jobs here, use the
-`best_gpu` compute profile. It resolves to the `a100x8` Hugging Face Jobs
-hardware flavor, CUDA device settings, float16 precision, the First Dataset
-Size preset, and longer training defaults:
+For the strongest GPU path that fits the current single-process trainer, use
+the `best_gpu` compute profile. It resolves to the `a100-large` Hugging Face
+Jobs hardware flavor, CUDA device settings, float16 precision, the First
+Dataset Size preset, and longer training defaults:
 
 ```json
 {

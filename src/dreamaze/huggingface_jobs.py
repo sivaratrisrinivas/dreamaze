@@ -8,7 +8,7 @@ _DEFAULT_SCRIPT_PATH = "jobs/dreamaze_hf_job.py"
 _DEFAULT_PACKAGE = (
     "dreamaze @ git+https://github.com/sivaratrisrinivas/dreamaze.git"
 )
-BEST_GPU_HARDWARE_FLAVOR = "a100x8"
+BEST_GPU_HARDWARE_FLAVOR = "a100-large"
 
 
 _DEFAULTS = {
