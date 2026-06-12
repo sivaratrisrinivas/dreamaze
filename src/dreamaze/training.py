@@ -23,7 +23,6 @@ class TrainingConfig:
     max_train_steps: int = 1
     checkpoint_every_steps: int = 1
     learning_rate: float = 1e-4
-    endpoint_loss_weight: float = 16.0
     seed: int = 0
     device: str = "cpu"
     precision: str = "float32"
@@ -80,13 +79,8 @@ def train_conditional_diffusion_solver(config: TrainingConfig) -> TrainingResult
         batch = _training_batch(
             examples=examples, batch_size=config.batch_size, training_step=training_step
         )
-        condition, target, loss_weights = _batch_tensors(
-            torch=torch,
-            batch=batch,
-            device=device,
-            dtype=dtype,
-            sample_size=sample_size,
-            endpoint_loss_weight=config.endpoint_loss_weight,
+        condition, target = _batch_tensors(
+            torch=torch, batch=batch, device=device, dtype=dtype, sample_size=sample_size
         )
         noise = torch.randn(
             target.shape,
@@ -104,12 +98,7 @@ def train_conditional_diffusion_solver(config: TrainingConfig) -> TrainingResult
         model_input = torch.cat([noisy_target, condition], dim=1)
 
         predicted_noise = model(model_input, timesteps).sample
-        loss = _weighted_mse_loss(
-            torch=torch,
-            predicted_noise=predicted_noise,
-            noise=noise,
-            loss_weights=loss_weights,
-        )
+        loss = torch.nn.functional.mse_loss(predicted_noise, noise)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -148,7 +137,6 @@ def load_training_config(path: str | Path) -> TrainingConfig:
         max_train_steps=payload["max_train_steps"],
         checkpoint_every_steps=payload["checkpoint_every_steps"],
         learning_rate=payload["learning_rate"],
-        endpoint_loss_weight=payload.get("endpoint_loss_weight", 16.0),
         seed=payload.get("seed", 0),
         device=payload.get("device", "cpu"),
         precision=payload.get("precision", "float32"),
@@ -229,31 +217,15 @@ def _training_batch(
     return tuple(examples[(start + offset) % len(examples)] for offset in range(batch_size))
 
 
-def _batch_tensors(
-    *,
-    torch,
-    batch,
-    device,
-    dtype,
-    sample_size: tuple[int, int],
-    endpoint_loss_weight: float,
-):
+def _batch_tensors(*, torch, batch, device, dtype, sample_size: tuple[int, int]):
     condition_rows = [_condition_channels(example) for example in batch]
     target_rows = [_solution_mask_target_channels(example) for example in batch]
-    loss_weight_rows = [
-        _loss_weight_channels(
-            example, endpoint_loss_weight=endpoint_loss_weight
-        )
-        for example in batch
-    ]
     tensor_dtype = dtype or torch.float32
     condition = torch.tensor(condition_rows, dtype=tensor_dtype, device=device)
     target = torch.tensor(target_rows, dtype=tensor_dtype, device=device)
-    loss_weights = torch.tensor(loss_weight_rows, dtype=tensor_dtype, device=device)
     condition = _pad_to_sample_size(torch, condition, sample_size)
     target = _pad_to_sample_size(torch, target, sample_size)
-    loss_weights = _pad_to_sample_size(torch, loss_weights, sample_size)
-    return condition, target, loss_weights
+    return condition, target
 
 
 def _solution_mask_target_channels(
@@ -265,28 +237,6 @@ def _solution_mask_target_channels(
             for row in example.solution_mask
         ]
     ]
-
-
-def _loss_weight_channels(
-    example: TrainingExampleArrays,
-    *,
-    endpoint_loss_weight: float,
-) -> list[list[list[float]]]:
-    rows = len(example.maze_condition)
-    columns = len(example.maze_condition[0])
-    weights = [[1.0 for _ in range(columns)] for _ in range(rows)]
-    start_row, start_column = _rendered_cell(example.start_cell)
-    goal_row, goal_column = _rendered_cell(example.goal_cell)
-    weights[start_row][start_column] = endpoint_loss_weight
-    weights[goal_row][goal_column] = endpoint_loss_weight
-    return [weights]
-
-
-def _weighted_mse_loss(*, torch, predicted_noise, noise, loss_weights):
-    squared_error = torch.nn.functional.mse_loss(
-        predicted_noise, noise, reduction="none"
-    )
-    return (squared_error * loss_weights).sum() / loss_weights.sum()
 
 
 def _condition_channels(example: TrainingExampleArrays) -> list[list[list[float]]]:
@@ -341,7 +291,6 @@ def _training_config_payload(config: TrainingConfig) -> Mapping[str, Any]:
         "max_train_steps": config.max_train_steps,
         "checkpoint_every_steps": config.checkpoint_every_steps,
         "learning_rate": config.learning_rate,
-        "endpoint_loss_weight": config.endpoint_loss_weight,
         "seed": config.seed,
         "device": config.device,
         "precision": config.precision,
@@ -396,8 +345,6 @@ def _validate_training_config(config: TrainingConfig) -> None:
         raise ValueError("Training checkpoint cadence must be positive")
     if config.learning_rate <= 0:
         raise ValueError("Training learning rate must be positive")
-    if config.endpoint_loss_weight < 1.0:
-        raise ValueError("Training endpoint loss weight must be at least 1.0")
     if config.num_workers < 0:
         raise ValueError("Training worker count cannot be negative")
     if config.device not in {"cpu", "cuda"}:

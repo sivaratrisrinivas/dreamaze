@@ -13,7 +13,6 @@ from dreamaze.training import (
     TrainingConfig,
     TrainingExampleArrays,
     load_training_config,
-    _loss_weight_channels,
     _solution_mask_target_channels,
     train_conditional_diffusion_solver,
 )
@@ -71,7 +70,6 @@ def test_tiny_dataset_artifacts_flow_through_training_and_write_checkpoint(tmp_p
     assert checkpoint["model_type"] == DIFFUSERS_MODEL_TYPE
     assert checkpoint["training_step"] == 1
     assert checkpoint["config"]["sampling_steps"] == 3
-    assert checkpoint["config"]["endpoint_loss_weight"] == 16.0
     assert checkpoint["config"]["device"] == "cpu"
     assert (result.checkpoints[0] / "unet").is_dir()
     assert (result.checkpoints[0] / "scheduler").is_dir()
@@ -90,7 +88,6 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
                 "max_train_steps": 6,
                 "checkpoint_every_steps": 2,
                 "learning_rate": 0.025,
-                "endpoint_loss_weight": 12.0,
                 "seed": 99,
                 "device": "cpu",
                 "precision": "float32",
@@ -109,7 +106,6 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
     assert config.max_train_steps == 6
     assert config.checkpoint_every_steps == 2
     assert config.learning_rate == 0.025
-    assert config.endpoint_loss_weight == 12.0
     assert config.seed == 99
     assert config.device == "cpu"
     assert config.precision == "float32"
@@ -130,33 +126,6 @@ def test_training_encodes_solution_mask_targets_symmetrically():
             [1.0, -1.0],
         ]
     ]
-
-
-def test_training_weights_rendered_endpoint_cells_more_than_body_cells():
-    example = TrainingExampleArrays(
-        maze_condition=(
-            (1, 1, 1, 1, 1),
-            (1, 1, 1, 1, 1),
-            (1, 1, 1, 1, 1),
-            (1, 1, 1, 1, 1),
-            (1, 1, 1, 1, 1),
-        ),
-        solution_mask=(
-            (0, 0, 0, 0, 0),
-            (0, 1, 1, 1, 0),
-            (0, 0, 0, 1, 0),
-            (0, 0, 0, 1, 0),
-            (0, 0, 0, 0, 0),
-        ),
-        start_cell=(0, 0),
-        goal_cell=(1, 1),
-    )
-
-    weights = _loss_weight_channels(example, endpoint_loss_weight=12.0)
-
-    assert weights[0][1][1] == 12.0
-    assert weights[0][3][3] == 12.0
-    assert weights[0][1][3] == 1.0
 
 
 def test_training_config_controls_checkpoint_cadence(tmp_path):
