@@ -1,6 +1,24 @@
 import os
 from pathlib import Path
+import sys
 from typing import Any
+
+_SPACE_SRC_PATH = Path(__file__).resolve().parent / "src"
+if _SPACE_SRC_PATH.exists():
+    sys.path.insert(0, str(_SPACE_SRC_PATH))
+
+try:
+    import spaces
+except ImportError:
+    class _LocalSpaces:
+        @staticmethod
+        def GPU(*_args: Any, **_kwargs: Any) -> Any:
+            def decorator(fn: Any) -> Any:
+                return fn
+
+            return decorator
+
+    spaces = _LocalSpaces()
 
 from dreamaze.dataset import MazeFamily
 from dreamaze.proof_demo import ProofDemoConfig, run_proof_demo
@@ -68,6 +86,9 @@ def _run_demo_for_gradio(
         outputs["training_label"],
         outputs["difference"],
     )
+
+
+_run_demo_for_gradio = spaces.GPU(duration=30)(_run_demo_for_gradio)
 
 
 def build_app() -> Any:

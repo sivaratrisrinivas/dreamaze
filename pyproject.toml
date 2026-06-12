@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "Research-first maze solving experiments."
 requires-python = ">=3.11"
 
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [project.scripts]
 dreamaze-dataset = "dreamaze.dataset_cli:main"
 dreamaze-evaluate = "dreamaze.evaluation_cli:main"

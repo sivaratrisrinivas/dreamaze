@@ -271,20 +271,48 @@ If that variable is unset, the demo uses the configured tiny fixture checkpoint
 so the browser UI and validation states can be smoke-tested before a real model
 artifact is uploaded.
 
-To create a Space repo, start with the cheapest path:
+The first public deployment is:
+
+- Proof Demo Space: <https://huggingface.co/spaces/Srini410/dreamaze-proof-demo>
+- Artifact dataset repo: <https://huggingface.co/datasets/Srini410/dreamaze-artifacts>
+- Solver model repo: <https://huggingface.co/Srini410/dreamaze-solver>
+
+The Proof Demo Space runs on Hugging Face ZeroGPU because the deployment target
+is a public learned-solver demo. The current demo still falls back to the tiny
+fixture checkpoint until a trained checkpoint is uploaded and
+`DREAMAZE_CHECKPOINT_PATH` points to it.
+
+The current public Space is configured with the initial trained tracer-bullet
+checkpoint:
+
+- Checkpoint: <https://huggingface.co/Srini410/dreamaze-solver/blob/main/checkpoints/checkpoint-step-000020.json>
+- Evaluation report: <https://huggingface.co/datasets/Srini410/dreamaze-artifacts/blob/main/runs/tiny-trained-step-000020/evaluation.json>
+
+This checkpoint proves the deployment path can load a trained
+Conditional Diffusion Solver checkpoint, but it does not meet the First Success
+Target. Its tiny validation run reported 0.0 Single-Sample Success.
+
+To create the deployment repos with the installed `hf` CLI:
 
 ```bash
-hf repos create your-name/dreamaze-proof-demo --type space --space-sdk gradio --flavor cpu-basic --public --exist-ok
+hf repo create Srini410/dreamaze-proof-demo --repo-type space --space_sdk gradio --exist-ok
+hf repo create Srini410/dreamaze-artifacts --repo-type dataset --private --exist-ok
+hf repo create Srini410/dreamaze-solver --exist-ok
 ```
 
 Then upload the Space app and package source:
 
 ```bash
-hf upload your-name/dreamaze-proof-demo spaces/proof_demo/app.py app.py
-hf upload your-name/dreamaze-proof-demo spaces/proof_demo/README.md README.md
-hf upload your-name/dreamaze-proof-demo spaces/proof_demo/requirements.txt requirements.txt
-hf upload your-name/dreamaze-proof-demo pyproject.toml pyproject.toml
-hf upload your-name/dreamaze-proof-demo src src
+hf upload Srini410/dreamaze-proof-demo spaces/proof_demo/app.py app.py --repo-type space
+hf upload Srini410/dreamaze-proof-demo spaces/proof_demo/README.md README.md --repo-type space
+hf upload Srini410/dreamaze-proof-demo spaces/proof_demo/requirements.txt requirements.txt --repo-type space
+hf upload Srini410/dreamaze-proof-demo src src --repo-type space
+```
+
+Set the Space hardware to ZeroGPU with the Hub API:
+
+```bash
+python -c "from huggingface_hub import HfApi, SpaceHardware; HfApi().request_space_hardware('Srini410/dreamaze-proof-demo', SpaceHardware.ZERO_A10G)"
 ```
 
 Use `cpu-basic` for the tiny fixture because it has no creator GPU cost. Use
