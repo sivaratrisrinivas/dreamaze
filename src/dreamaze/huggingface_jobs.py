@@ -8,7 +8,7 @@ _DEFAULT_SCRIPT_PATH = "jobs/dreamaze_hf_job.py"
 _DEFAULT_PACKAGE = (
     "dreamaze @ git+https://github.com/sivaratrisrinivas/dreamaze.git"
 )
-BEST_GPU_HARDWARE_FLAVOR = "a100-large"
+BEST_GPU_HARDWARE_FLAVOR = "t4-small"
 
 
 _DEFAULTS = {
@@ -39,15 +39,15 @@ _DEFAULTS = {
 
 _BEST_GPU_PROFILE = {
     "hardware_flavor": BEST_GPU_HARDWARE_FLAVOR,
-    "timeout": "8h",
+    "timeout": "2h",
     "dataset_preset": "first",
-    "batch_size": 64,
-    "sampling_steps": 64,
-    "max_train_steps": 5000,
-    "checkpoint_every_steps": 250,
+    "batch_size": 16,
+    "sampling_steps": 32,
+    "max_train_steps": 1000,
+    "checkpoint_every_steps": 200,
     "device": "cuda",
-    "precision": "bfloat16",
-    "num_workers": 4,
+    "precision": "float16",
+    "num_workers": 0,
     "env": {"HF_XET_HIGH_PERFORMANCE": "1"},
 }
 

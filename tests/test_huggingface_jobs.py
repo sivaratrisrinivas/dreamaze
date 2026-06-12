@@ -113,12 +113,12 @@ def test_huggingface_job_config_can_select_best_gpu_profile(tmp_path):
     assert config.hardware_flavor == BEST_GPU_HARDWARE_FLAVOR
     assert config.dataset_preset == "first"
     assert config.device == "cuda"
-    assert config.precision == "bfloat16"
-    assert config.batch_size == 64
-    assert config.sampling_steps == 64
-    assert config.max_train_steps == 5000
-    assert config.checkpoint_every_steps == 250
-    assert config.timeout == "8h"
+    assert config.precision == "float16"
+    assert config.batch_size == 16
+    assert config.sampling_steps == 32
+    assert config.max_train_steps == 1000
+    assert config.checkpoint_every_steps == 200
+    assert config.timeout == "2h"
     assert "--flavor" in command
     assert BEST_GPU_HARDWARE_FLAVOR in command
     assert "--device" in command
