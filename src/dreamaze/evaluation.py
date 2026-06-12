@@ -1,9 +1,8 @@
-import json
 import hashlib
+import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from random import Random
 from typing import Any, Mapping
 
 from dreamaze.dataset import (
@@ -11,7 +10,17 @@ from dreamaze.dataset import (
     load_dataset_artifact_manifest,
     load_dataset_artifact_shard,
 )
-from dreamaze.training import _predict, _rendered_cell
+from dreamaze.training import (
+    DIFFUSERS_MODEL_TYPE,
+    TrainingExampleArrays,
+    _ceil_multiple,
+    _condition_channels,
+    _pad_to_sample_size,
+    _rendered_cell,
+    _torch_device,
+    _torch_dtype,
+    load_checkpoint_metadata,
+)
 from dreamaze.validation import validate_solution_mask
 
 
@@ -20,10 +29,12 @@ class EvaluationConfig:
     dataset_dir: str | Path
     checkpoint_path: str | Path
     split: str = "validation"
-    sampling_steps: int = 8
+    sampling_steps: int = 32
     retry_count: int = 0
     seed: int = 0
     report_path: str | Path | None = None
+    device: str = "cpu"
+    precision: str = "float32"
 
 
 @dataclass(frozen=True)
@@ -93,11 +104,12 @@ class ConditionalDiffusionSamplingExample:
 
 
 @dataclass(frozen=True)
-class _EvaluationExampleArrays:
-    maze_condition: tuple[tuple[int, ...], ...]
-    solution_mask: tuple[tuple[int, ...], ...]
-    start_cell: tuple[int, int]
-    goal_cell: tuple[int, int]
+class _LoadedDiffusersSolver:
+    torch: Any
+    model: Any
+    scheduler: Any
+    device: Any
+    dtype: Any
 
 
 def evaluate_conditional_diffusion_solver(
@@ -105,22 +117,26 @@ def evaluate_conditional_diffusion_solver(
 ) -> EvaluationResult:
     _validate_evaluation_config(config)
     checkpoint_path = Path(config.checkpoint_path)
-    checkpoint = json.loads(checkpoint_path.read_text())
-    weights = checkpoint["weights"]
+    metadata = load_checkpoint_metadata(checkpoint_path)
+    _validate_checkpoint_metadata(metadata)
+    solver = load_diffusers_solver_checkpoint(
+        checkpoint_path=checkpoint_path,
+        device=config.device,
+        precision=config.precision,
+    )
     examples = _load_evaluation_examples(config)
-    rng = Random(config.seed)
 
     single_sample_valid_count = 0
     retry_valid_count = 0
     failure_reasons: Counter[str] = Counter()
     mask_overlaps: list[float] = []
 
-    for example in examples:
-        first_mask = _sample_solution_mask(
-            example=example,
-            weights=weights,
+    for index, example in enumerate(examples):
+        first_mask = sample_conditional_diffusion_solution_mask(
+            example=_sampling_example_from_arrays(example),
+            solver=solver,
             sampling_steps=config.sampling_steps,
-            rng=rng,
+            seed=config.seed + index,
         )
         first_result = validate_solution_mask(
             grid_maze=_bool_grid(example.maze_condition),
@@ -140,10 +156,10 @@ def evaluate_conditional_diffusion_solver(
         failure_reasons[str(first_result.reason)] += 1
         if _retry_finds_valid_solution(
             example=example,
-            weights=weights,
+            solver=solver,
             sampling_steps=config.sampling_steps,
             retry_count=config.retry_count,
-            rng=rng,
+            seed=config.seed + 10_000 + index,
         ):
             retry_valid_count += 1
 
@@ -165,9 +181,9 @@ def evaluate_conditional_diffusion_solver(
     return EvaluationResult(
         dataset_split=config.split,
         checkpoint_path=checkpoint_path,
-        checkpoint_model_type=checkpoint["model_type"],
-        checkpoint_training_step=checkpoint["training_step"],
-        checkpoint_sha256=_sha256_file(checkpoint_path),
+        checkpoint_model_type=metadata["model_type"],
+        checkpoint_training_step=metadata["training_step"],
+        checkpoint_sha256=_sha256_path(checkpoint_path),
         sampling_steps=config.sampling_steps,
         retry_count=config.retry_count,
         seed=config.seed,
@@ -179,55 +195,100 @@ def evaluate_conditional_diffusion_solver(
     )
 
 
+def load_diffusers_solver_checkpoint(
+    *, checkpoint_path: str | Path, device: str = "cpu", precision: str = "float32"
+) -> _LoadedDiffusersSolver:
+    try:
+        import torch
+        from diffusers import DDPMScheduler, UNet2DModel
+    except ImportError as error:
+        raise RuntimeError(
+            "Dreamaze Runtime Solving requires torch and diffusers. "
+            "Run the Proof Demo on a configured Hugging Face environment."
+        ) from error
+
+    checkpoint = Path(checkpoint_path)
+    metadata = load_checkpoint_metadata(checkpoint)
+    _validate_checkpoint_metadata(metadata)
+    torch_device = _torch_device(torch, device)
+    dtype = _torch_dtype(torch, precision)
+    model = UNet2DModel.from_pretrained(checkpoint / "unet").to(
+        device=torch_device, dtype=dtype
+    )
+    scheduler = DDPMScheduler.from_pretrained(checkpoint / "scheduler")
+    model.eval()
+    return _LoadedDiffusersSolver(
+        torch=torch,
+        model=model,
+        scheduler=scheduler,
+        device=torch_device,
+        dtype=dtype,
+    )
+
+
 def sample_conditional_diffusion_solution_mask(
     *,
     example: ConditionalDiffusionSamplingExample,
-    weights: Mapping[str, float],
+    solver: _LoadedDiffusersSolver,
     sampling_steps: int,
-    rng: Random,
+    seed: int,
 ) -> tuple[tuple[bool, ...], ...]:
-    if sampling_steps < 1:
-        raise ValueError("Conditional Diffusion Solver sampling steps must be positive")
-    traj = _sample_solution_mask_trajectory(
-        example=_EvaluationExampleArrays(
-            maze_condition=example.maze_condition,
-            solution_mask=(),
-            start_cell=example.start_cell,
-            goal_cell=example.goal_cell,
-        ),
-        weights=weights,
+    trajectory = sample_conditional_diffusion_solution_mask_trajectory(
+        example=example,
+        solver=solver,
         sampling_steps=sampling_steps,
-        rng=rng,
+        seed=seed,
     )
-    return traj[-1]
+    return trajectory[-1]
 
 
 def sample_conditional_diffusion_solution_mask_trajectory(
     *,
     example: ConditionalDiffusionSamplingExample,
-    weights: Mapping[str, float],
+    solver: _LoadedDiffusersSolver,
     sampling_steps: int,
-    rng: Random,
+    seed: int,
 ) -> list[tuple[tuple[bool, ...], ...]]:
-    """Return the full denoising trajectory for real-time visualization.
-
-    Index 0 is the initial pure noise mask.
-    The final element (index == sampling_steps) is the clean sampled Solution Mask.
-    Length is always sampling_steps + 1.
-    """
     if sampling_steps < 1:
         raise ValueError("Conditional Diffusion Solver sampling steps must be positive")
-    return _sample_solution_mask_trajectory(
-        example=_EvaluationExampleArrays(
-            maze_condition=example.maze_condition,
-            solution_mask=(),
-            start_cell=example.start_cell,
-            goal_cell=example.goal_cell,
-        ),
-        weights=weights,
-        sampling_steps=sampling_steps,
-        rng=rng,
+
+    torch = solver.torch
+    original_rows = len(example.maze_condition)
+    original_columns = len(example.maze_condition[0])
+    sample_size = (
+        _ceil_multiple(original_rows, 8),
+        _ceil_multiple(original_columns, 8),
     )
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    condition = _sampling_condition_tensor(
+        torch=torch,
+        example=example,
+        device=solver.device,
+        dtype=solver.dtype,
+        sample_size=sample_size,
+    )
+    noisy_mask = torch.randn(
+        (1, 1, sample_size[0], sample_size[1]),
+        generator=generator,
+        dtype=solver.dtype,
+    ).to(solver.device)
+
+    frames = [_tensor_to_mask(noisy_mask, original_rows, original_columns)]
+    solver.scheduler.set_timesteps(sampling_steps, device=solver.device)
+
+    with torch.no_grad():
+        for timestep in solver.scheduler.timesteps:
+            model_input = torch.cat([noisy_mask, condition], dim=1)
+            predicted_noise = solver.model(model_input, timestep).sample
+            noisy_mask = solver.scheduler.step(
+                predicted_noise,
+                timestep,
+                noisy_mask,
+                generator=generator,
+            ).prev_sample
+            frames.append(_tensor_to_mask(noisy_mask, original_rows, original_columns))
+
+    return frames
 
 
 def load_evaluation_config(path: str | Path) -> EvaluationConfig:
@@ -242,6 +303,8 @@ def load_evaluation_config(path: str | Path) -> EvaluationConfig:
         report_path=(
             Path(payload["report_path"]) if payload.get("report_path") else None
         ),
+        device=payload.get("device", "cpu"),
+        precision=payload.get("precision", "float32"),
     )
     _validate_evaluation_config(config)
     return config
@@ -249,18 +312,18 @@ def load_evaluation_config(path: str | Path) -> EvaluationConfig:
 
 def _retry_finds_valid_solution(
     *,
-    example: _EvaluationExampleArrays,
-    weights: Mapping[str, float],
+    example: TrainingExampleArrays,
+    solver: _LoadedDiffusersSolver,
     sampling_steps: int,
     retry_count: int,
-    rng: Random,
+    seed: int,
 ) -> bool:
-    for _ in range(retry_count):
-        mask = _sample_solution_mask(
-            example=example,
-            weights=weights,
+    for attempt in range(retry_count):
+        mask = sample_conditional_diffusion_solution_mask(
+            example=_sampling_example_from_arrays(example),
+            solver=solver,
             sampling_steps=sampling_steps,
-            rng=rng,
+            seed=seed + attempt,
         )
         result = validate_solution_mask(
             grid_maze=_bool_grid(example.maze_condition),
@@ -273,76 +336,13 @@ def _retry_finds_valid_solution(
     return False
 
 
-def _sample_solution_mask_trajectory(
-    *,
-    example: _EvaluationExampleArrays,
-    weights: Mapping[str, float],
-    sampling_steps: int,
-    rng: Random,
-) -> list[tuple[tuple[bool, ...], ...]]:
-    """Internal: full trajectory of the reverse diffusion process.
-
-    Captures the mask state after initialization (noise) and after each
-    reverse timestep update. This powers the Proof Demo real-time solving viz.
-    """
-    current_mask = tuple(
-        tuple(rng.choice((0.0, 1.0)) for _ in row) for row in example.maze_condition
-    )
-    start_cell = _rendered_cell(example.start_cell)
-    goal_cell = _rendered_cell(example.goal_cell)
-
-    intermediates: list[tuple[tuple[bool, ...], ...]] = [
-        tuple(tuple(bool(value) for value in row) for row in current_mask)
-    ]
-
-    for timestep in range(sampling_steps, 0, -1):
-        timestep_feature = timestep / sampling_steps
-        next_mask: list[tuple[float, ...]] = []
-        for row_index, row in enumerate(example.maze_condition):
-            next_row: list[float] = []
-            for column_index, is_open in enumerate(row):
-                features = {
-                    "bias": 1.0,
-                    "maze_open": float(is_open),
-                    "start": float((row_index, column_index) == start_cell),
-                    "goal": float((row_index, column_index) == goal_cell),
-                    "noisy_mask": current_mask[row_index][column_index],
-                    "timestep": timestep_feature,
-                }
-                next_row.append(
-                    1.0 if _predict(weights, features) >= rng.random() else 0.0
-                )
-            next_mask.append(tuple(next_row))
-        current_mask = tuple(next_mask)
-        bool_mask = tuple(tuple(bool(value) for value in row) for row in current_mask)
-        intermediates.append(bool_mask)
-
-    return intermediates
-
-
-def _sample_solution_mask(
-    *,
-    example: _EvaluationExampleArrays,
-    weights: Mapping[str, float],
-    sampling_steps: int,
-    rng: Random,
-) -> tuple[tuple[bool, ...], ...]:
-    traj = _sample_solution_mask_trajectory(
-        example=example,
-        weights=weights,
-        sampling_steps=sampling_steps,
-        rng=rng,
-    )
-    return traj[-1]
-
-
 def _load_evaluation_examples(
     config: EvaluationConfig,
-) -> tuple[_EvaluationExampleArrays, ...]:
+) -> tuple[TrainingExampleArrays, ...]:
     dataset_dir = Path(config.dataset_dir)
     manifest = load_dataset_artifact_manifest(dataset_dir / "manifest.json")
     requested_split = DatasetSplitName(config.split)
-    examples: list[_EvaluationExampleArrays] = []
+    examples: list[TrainingExampleArrays] = []
 
     for shard in manifest.shards:
         if shard.split != requested_split:
@@ -358,15 +358,49 @@ def _load_evaluation_examples(
 
 def _examples_from_shard_payload(
     payload: Mapping[str, Any]
-) -> tuple[_EvaluationExampleArrays, ...]:
+) -> tuple[TrainingExampleArrays, ...]:
     return tuple(
-        _EvaluationExampleArrays(
+        TrainingExampleArrays(
             maze_condition=_grid(payload["maze_condition"][index]),
             solution_mask=_grid(payload["solution_mask"][index]),
             start_cell=tuple(payload["start_cell"][index]),
             goal_cell=tuple(payload["goal_cell"][index]),
         )
         for index in range(len(payload["maze_condition"]))
+    )
+
+
+def _sampling_example_from_arrays(
+    example: TrainingExampleArrays,
+) -> ConditionalDiffusionSamplingExample:
+    return ConditionalDiffusionSamplingExample(
+        maze_condition=example.maze_condition,
+        start_cell=example.start_cell,
+        goal_cell=example.goal_cell,
+    )
+
+
+def _sampling_condition_tensor(*, torch, example, device, dtype, sample_size):
+    arrays = TrainingExampleArrays(
+        maze_condition=example.maze_condition,
+        solution_mask=(),
+        start_cell=example.start_cell,
+        goal_cell=example.goal_cell,
+    )
+    condition = torch.tensor(
+        [_condition_channels(arrays)],
+        dtype=dtype,
+        device=device,
+    )
+    return _pad_to_sample_size(torch, condition, sample_size)
+
+
+def _tensor_to_mask(tensor, rows: int, columns: int) -> tuple[tuple[bool, ...], ...]:
+    cropped = tensor.detach().float().cpu()[0, 0, :rows, :columns]
+    probabilities = cropped.sigmoid()
+    return tuple(
+        tuple(bool(value >= 0.5) for value in row.tolist())
+        for row in probabilities
     )
 
 
@@ -398,6 +432,15 @@ def _validate_evaluation_config(config: EvaluationConfig) -> None:
         raise ValueError("Evaluation sampling steps must be positive")
     if config.retry_count < 0:
         raise ValueError("Evaluation retry count cannot be negative")
+    if config.device not in {"cpu", "cuda"}:
+        raise ValueError("Evaluation device must be cpu or cuda")
+    if config.precision not in {"float32", "float16", "bfloat16"}:
+        raise ValueError("Evaluation precision must be float32, float16, or bfloat16")
+
+
+def _validate_checkpoint_metadata(metadata: Mapping[str, Any]) -> None:
+    if metadata.get("model_type") != DIFFUSERS_MODEL_TYPE:
+        raise ValueError("Checkpoint is not a Dreamaze Diffusers Conditional Diffusion Solver")
 
 
 def _bool_grid(rows: tuple[tuple[int, ...], ...]) -> tuple[tuple[bool, ...], ...]:
@@ -408,9 +451,12 @@ def _grid(rows: list[list[int]]) -> tuple[tuple[int, ...], ...]:
     return tuple(tuple(int(value) for value in row) for row in rows)
 
 
-def _sha256_file(path: Path) -> str:
+def _sha256_path(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as checkpoint:
-        for chunk in iter(lambda: checkpoint.read(1024 * 1024), b""):
-            digest.update(chunk)
+    files = [path] if path.is_file() else sorted(item for item in path.rglob("*") if item.is_file())
+    for file_path in files:
+        digest.update(str(file_path.relative_to(path) if path.is_dir() else file_path.name).encode())
+        with file_path.open("rb") as checkpoint:
+            for chunk in iter(lambda: checkpoint.read(1024 * 1024), b""):
+                digest.update(chunk)
     return digest.hexdigest()

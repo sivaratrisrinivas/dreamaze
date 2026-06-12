@@ -9,7 +9,7 @@ A model that solves a maze by generating or refining a solution path through the
 _Avoid_: DFS solver, pathfinding visualizer
 
 **Conditional Diffusion Solver**:
-A small diffusion model that receives a **Grid Maze** and generates a **Solution Mask** for that maze.
+A Dreamaze-trained diffusion model that receives a **Grid Maze** and generates a **Solution Mask** for that maze.
 _Avoid_: Stable Diffusion maze art, fake diffusion animation
 
 **Maze**:
@@ -131,6 +131,18 @@ _Avoid_: Path length balancing, unlimited tiny paths
 **Solution Mask**:
 An image-like layer that marks the cells or pixels belonging to the **Solution Path** and leaves non-solution areas unmarked.
 _Avoid_: Move list, pretty overlay
+
+**Diffusion Trajectory**:
+The ordered sequence of intermediate **Solution Masks** produced while the **Conditional Diffusion Solver** refines noise into its final generated mask.
+_Avoid_: Fake animation, decorative progress effect
+
+**Real-Time Diffusion Playback**:
+A visual playback of the **Diffusion Trajectory** that lets a user watch the **Conditional Diffusion Solver** refine its proposed **Solution Mask** step by step.
+_Avoid_: Static result only, pathfinding animation
+
+**Trained Solver Checkpoint**:
+A saved **Conditional Diffusion Solver** state produced by Dreamaze training and used for **Runtime Solving**.
+_Avoid_: Fixture weights, hand-tuned demo weights
 
 **Valid Solution**:
 A **Solution Mask** that connects the **Start Cell** to the **Goal Cell** through open cells in one continuous route with no extra branches.

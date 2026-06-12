@@ -2,6 +2,8 @@ import json
 import importlib.util
 import sys
 
+import pytest
+
 from dreamaze.huggingface_jobs import (
     BEST_GPU_HARDWARE_FLAVOR,
     HuggingFaceJobConfig,
@@ -152,6 +154,7 @@ def test_huggingface_job_cli_dry_run_prints_command_without_launching(tmp_path, 
 def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
     tmp_path, monkeypatch
 ):
+    _requires_diffusers_runtime()
     script_path = "jobs/dreamaze_hf_job.py"
     spec = importlib.util.spec_from_file_location("dreamaze_hf_job", script_path)
     assert spec is not None
@@ -206,7 +209,15 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
 
     assert exit_code == 0
     assert (dataset_dir / "manifest.json").exists()
-    assert (checkpoint_dir / "checkpoint-step-000001.json").exists()
+    assert (checkpoint_dir / "checkpoint-step-000001" / "metadata.json").exists()
     report = json.loads(evaluation_output.read_text())
     assert report["dataset_split"] == "validation"
     assert report["official_score"] == "single_sample_success"
+
+
+def _requires_diffusers_runtime() -> None:
+    try:
+        import torch  # noqa: F401
+        import diffusers  # noqa: F401
+    except ImportError as error:
+        pytest.skip(f"Diffusers runtime is unavailable locally: {error}")

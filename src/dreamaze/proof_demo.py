@@ -1,8 +1,6 @@
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from random import Random
-from typing import Mapping, Sequence
+from typing import Sequence
 
 from dreamaze.dataset import (
     BoolGrid,
@@ -14,6 +12,7 @@ from dreamaze.dataset import (
 )
 from dreamaze.evaluation import (
     ConditionalDiffusionSamplingExample,
+    load_diffusers_solver_checkpoint,
     sample_conditional_diffusion_solution_mask,
     sample_conditional_diffusion_solution_mask_trajectory,
 )
@@ -22,7 +21,7 @@ from dreamaze.validation import SolutionValidationResult, validate_solution_mask
 
 @dataclass(frozen=True)
 class ProofDemoConfig:
-    checkpoint_path: str | Path | None = None
+    checkpoint_path: str | Path
     width: int = 16
     height: int = 16
     maze_seed: int = 0
@@ -71,23 +70,22 @@ def run_proof_demo(config: ProofDemoConfig) -> ProofDemoResult:
             split="demo",
         ),
     )
-    weights = _load_checkpoint_weights(config.checkpoint_path)
+    solver = load_diffusers_solver_checkpoint(checkpoint_path=config.checkpoint_path)
     sampling_example = _sampling_example_from_training_example(example)
     if config.capture_trajectory:
-        rng = Random(config.seed)
         intermediates = sample_conditional_diffusion_solution_mask_trajectory(
             example=sampling_example,
-            weights=weights,
+            solver=solver,
             sampling_steps=config.sampling_steps,
-            rng=rng,
+            seed=config.seed,
         )
         generated_mask = intermediates[-1]
     else:
         generated_mask = sample_conditional_diffusion_solution_mask(
             example=sampling_example,
-            weights=weights,
+            solver=solver,
             sampling_steps=config.sampling_steps,
-            rng=Random(config.seed),
+            seed=config.seed,
         )
         intermediates = None
 
@@ -99,7 +97,7 @@ def run_proof_demo(config: ProofDemoConfig) -> ProofDemoResult:
     )
     retry_success = _run_sampling_retries(
         example=example,
-        weights=weights,
+        solver=solver,
         sampling_steps=config.sampling_steps,
         retry_count=config.retry_count,
         seed=config.seed,
@@ -151,20 +149,10 @@ def run_proof_demo(config: ProofDemoConfig) -> ProofDemoResult:
     )
 
 
-def _load_checkpoint_weights(checkpoint_path: str | Path | None) -> Mapping[str, float]:
-    if checkpoint_path is None:
-        return _tiny_fixture_weights()
-
-    payload = json.loads(Path(checkpoint_path).read_text())
-    if payload.get("model_type") != "custom_conditional_diffusion_solver":
-        raise ValueError("Checkpoint is not a custom Conditional Diffusion Solver")
-    return payload["weights"]
-
-
 def _run_sampling_retries(
     *,
     example: TrainingExample,
-    weights: Mapping[str, float],
+    solver,
     sampling_steps: int,
     retry_count: int,
     seed: int,
@@ -172,14 +160,13 @@ def _run_sampling_retries(
     if retry_count == 0:
         return None
 
-    rng = Random(seed + 1)
     sampling_example = _sampling_example_from_training_example(example)
     for attempt in range(1, retry_count + 1):
         retry_mask = sample_conditional_diffusion_solution_mask(
             example=sampling_example,
-            weights=weights,
+            solver=solver,
             sampling_steps=sampling_steps,
-            rng=rng,
+            seed=seed + attempt,
         )
         retry_validation = validate_solution_mask(
             grid_maze=example.maze_condition.rendered_maze,
@@ -190,17 +177,6 @@ def _run_sampling_retries(
         if retry_validation.valid:
             return ProofDemoRetryResult(valid=True, attempts=attempt)
     return ProofDemoRetryResult(valid=False, attempts=retry_count)
-
-
-def _tiny_fixture_weights() -> Mapping[str, float]:
-    return {
-        "bias": -2.0,
-        "maze_open": 1.5,
-        "start": 1.0,
-        "goal": 1.0,
-        "noisy_mask": 0.5,
-        "timestep": 0.25,
-    }
 
 
 def _sampling_example_from_training_example(

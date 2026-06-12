@@ -13,7 +13,7 @@ startup_duration_timeout: 30m
 
 # Dreamaze Proof Demo
 
-This Space runs the Dreamaze Conditional Diffusion Solver (a tiny learned model) against a fresh Grid Maze.
+This Space runs the Dreamaze Conditional Diffusion Solver against a fresh Grid Maze.
 
 **The UI is fully automated**: there is only a "Solve New Maze" button. All settings (maze family, seed, sampling steps, retries, debug) are chosen internally so the visitor sees only the button and the result.
 
@@ -21,6 +21,6 @@ Clicking triggers a live **Runtime Solving** step: the model receives the Render
 
 The result area shows the evolving path claim, the final verdict ("Valid Solution" or "Invalid Solution" + reason), and a tiny legend. Everything uses the project's domain language (Conditional Diffusion Solver, Grid Maze, Solution Mask, Single-Sample Success, Graph Validation).
 
-Set `DREAMAZE_CHECKPOINT_PATH` to a checkpoint path in the Space when a trained checkpoint is available. If it is unset, the Space uses the configured tiny fixture checkpoint for smoke testing.
+Set `DREAMAZE_CHECKPOINT_PATH` to a trained Dreamaze Diffusers checkpoint directory in the Space. If it is unset or points to a missing checkpoint, the Space fails at startup instead of showing a fixture result.
 
-Hardware is intentionally configured outside this README. Use `cpu-basic` for the tiny fixture, `zero-a10g` for a free queued GPU path on eligible Hugging Face Pro/Team/Enterprise accounts, or paid GPU hardware when latency matters more than creator cost.
+Hardware is intentionally configured outside this README. Use `zero-a10g` for a free queued GPU path on eligible Hugging Face Pro/Team/Enterprise accounts, or paid GPU hardware when latency matters more than creator cost.

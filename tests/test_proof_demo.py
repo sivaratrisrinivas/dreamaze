@@ -1,76 +1,125 @@
 import importlib.util
+import sys
+from dataclasses import replace
 from pathlib import Path
 
-from dreamaze.proof_demo import ProofDemoConfig, run_proof_demo
+from dreamaze.proof_demo import (
+    ProofDemoResult,
+    build_diffusion_viz_html,
+    run_proof_demo,
+)
+from dreamaze.validation import SolutionValidationResult
 
 
 _SPACE_APP_PATH = Path(__file__).parents[1] / "spaces" / "proof_demo" / "app.py"
-_SPACE_APP_SPEC = importlib.util.spec_from_file_location(
-    "dreamaze_proof_demo_space_app", _SPACE_APP_PATH
-)
-assert _SPACE_APP_SPEC is not None
-assert _SPACE_APP_SPEC.loader is not None
-_SPACE_APP = importlib.util.module_from_spec(_SPACE_APP_SPEC)
-_SPACE_APP_SPEC.loader.exec_module(_SPACE_APP)
 
 
-def test_proof_demo_fixture_displays_maze_mask_and_validation_status():
-    result = run_proof_demo(
-        ProofDemoConfig(
-            width=4,
-            height=4,
-            maze_seed=123,
-            sampling_steps=2,
-            seed=7,
+def test_proof_demo_requires_a_trained_solver_checkpoint():
+    try:
+        run_proof_demo(
+            _minimal_config(checkpoint_path=Path("/tmp/missing-dreamaze-checkpoint"))
         )
-    )
-
-    assert result.start_cell != result.goal_cell
-    assert result.rendered_maze_svg.startswith("<svg")
-    assert result.generated_solution_mask_svg.startswith("<svg")
-    assert result.single_sample_success.valid in {True, False}
-    assert result.validation_status in {"Valid Solution", "Invalid Solution"}
-    if not result.single_sample_success.valid:
-        assert result.validation_reason is not None
+    except FileNotFoundError:
+        pass
+    except RuntimeError as error:
+        assert "torch and diffusers" in str(error)
+    else:
+        raise AssertionError("Proof Demo ran without a Trained Solver Checkpoint")
 
 
-def test_proof_demo_debug_reveal_adds_training_label_and_difference_views():
-    hidden = run_proof_demo(
-        ProofDemoConfig(width=4, height=4, maze_seed=123, debug_reveal=False)
-    )
-    revealed = run_proof_demo(
-        ProofDemoConfig(width=4, height=4, maze_seed=123, debug_reveal=True)
-    )
+def test_diffusion_viz_html_animates_captured_trajectory():
+    result = _proof_demo_result()
 
-    assert hidden.training_label_svg is None
-    assert hidden.difference_svg is None
-    assert revealed.training_label_svg is not None
-    assert revealed.difference_svg is not None
-    assert revealed.generated_solution_mask_svg != revealed.training_label_svg
-
-
-def test_proof_demo_reports_retry_success_separately_from_single_sample():
-    result = run_proof_demo(
-        ProofDemoConfig(width=4, height=4, maze_seed=123, retry_count=2)
-    )
-
-    assert result.retry_success is not None
-    assert result.retry_success.excluded_from_official_score is True
-    assert result.official_score == "Single-Sample Success"
-
-
-def test_space_demo_handler_returns_browser_facing_outputs():
-    outputs = _SPACE_APP.run_demo(
+    html = build_diffusion_viz_html(
+        result,
         maze_family="kruskal",
         maze_seed=123,
-        sampling_steps=2,
-        retry_count=1,
-        debug_reveal=True,
+        sampling_steps_used=2,
     )
 
-    assert outputs["rendered_maze"].startswith("<svg")
-    assert outputs["generated_solution_mask"].startswith("<svg")
-    assert outputs["validation_status"] in {"Valid Solution", "Invalid Solution"}
-    assert "Single-Sample Success" in outputs["sampling_summary"]
-    assert outputs["training_label"].startswith("<svg")
-    assert outputs["difference"].startswith("<svg")
+    assert "Conditional Diffusion Solver trajectory" in html
+    assert "Single-Sample Success" in html
+    assert "FRAMES" in html
+    assert "Replay solving steps" in html
+    assert "fixture" not in html.lower()
+
+
+def test_diffusion_viz_html_falls_back_without_trajectory():
+    result = replace(_proof_demo_result(), diffusion_intermediates=None)
+
+    html = build_diffusion_viz_html(result)
+
+    assert "dreamaze-fallback" in html
+    assert "Valid Solution" in html
+
+
+def test_space_app_requires_checkpoint_at_startup(monkeypatch):
+    monkeypatch.delenv("DREAMAZE_CHECKPOINT_PATH", raising=False)
+
+    try:
+        _load_space_app("dreamaze_space_missing_checkpoint")
+    except RuntimeError as error:
+        assert "DREAMAZE_CHECKPOINT_PATH" in str(error)
+    else:
+        raise AssertionError("Space app started without a Trained Solver Checkpoint")
+
+
+def test_space_app_exposes_only_solve_new_maze_handler(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    module = _load_space_app("dreamaze_space_one_button")
+
+    assert hasattr(module, "run_automated_demo")
+    assert not hasattr(module, "run_demo")
+    assert not hasattr(module, "_run_demo_for_gradio")
+
+
+def _load_space_app(module_name: str):
+    sys.modules.pop(module_name, None)
+    spec = importlib.util.spec_from_file_location(module_name, _SPACE_APP_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _minimal_config(*, checkpoint_path: Path):
+    from dreamaze.proof_demo import ProofDemoConfig
+
+    return ProofDemoConfig(
+        checkpoint_path=checkpoint_path,
+        width=4,
+        height=4,
+        maze_seed=123,
+        sampling_steps=2,
+        seed=7,
+    )
+
+
+def _proof_demo_result() -> ProofDemoResult:
+    rendered_maze = (
+        (False, False, False),
+        (False, True, False),
+        (False, False, False),
+    )
+    mask = (
+        (False, False, False),
+        (False, True, False),
+        (False, False, False),
+    )
+    svg = '<svg viewBox="0 0 3 3"></svg>'
+    return ProofDemoResult(
+        rendered_maze_svg=svg,
+        generated_solution_mask_svg=svg,
+        start_cell=(0, 0),
+        goal_cell=(0, 0),
+        rendered_start_cell=(1, 1),
+        rendered_goal_cell=(1, 1),
+        rendered_maze=rendered_maze,
+        validation_status="Valid Solution",
+        validation_reason=None,
+        single_sample_success=SolutionValidationResult(valid=True),
+        diffusion_intermediates=[mask, mask, mask],
+    )

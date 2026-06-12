@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from dreamaze.dataset import (
     DatasetConfig,
     DatasetSplitName,
@@ -12,9 +14,11 @@ from dreamaze.evaluation import (
 )
 from dreamaze.evaluation_cli import run_evaluation_cli
 from dreamaze.training import TrainingConfig, train_conditional_diffusion_solver
+from dreamaze.training import DIFFUSERS_MODEL_TYPE
 
 
 def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
+    _requires_diffusers_runtime()
     dataset_dir = tmp_path / "dataset"
     checkpoint_dir = tmp_path / "checkpoints"
     write_dataset_artifacts(
@@ -77,7 +81,7 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
 
     report = json.loads(result.to_json())
     assert report["dataset_split"] == "validation"
-    assert report["checkpoint"]["model_type"] == "custom_conditional_diffusion_solver"
+    assert report["checkpoint"]["model_type"] == DIFFUSERS_MODEL_TYPE
     assert len(report["checkpoint"]["sha256"]) == 64
     assert report["sampling"]["retry_count"] == 1
     assert report["sampling"]["seed"] == 11
@@ -86,6 +90,7 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
 
 
 def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
+    _requires_diffusers_runtime()
     dataset_dir = tmp_path / "dataset"
     checkpoint_dir = tmp_path / "checkpoints"
     report_path = tmp_path / "evaluation.json"
@@ -128,6 +133,8 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
                 "retry_count": 1,
                 "seed": 5,
                 "report_path": str(report_path),
+                "device": "cpu",
+                "precision": "float32",
             }
         )
     )
@@ -145,3 +152,11 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     cli_output = capsys.readouterr().out
     assert "Conditional Diffusion Solver evaluation complete" in cli_output
     assert "Official score: Single-Sample Success" in cli_output
+
+
+def _requires_diffusers_runtime() -> None:
+    try:
+        import torch  # noqa: F401
+        import diffusers  # noqa: F401
+    except ImportError as error:
+        pytest.skip(f"Diffusers runtime is unavailable locally: {error}")

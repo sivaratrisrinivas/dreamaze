@@ -1,11 +1,14 @@
 import json
 
+import pytest
+
 from dreamaze.dataset import (
     DatasetConfig,
     DatasetSplitName,
     MazeFamily,
     write_dataset_artifacts,
 )
+from dreamaze.training import DIFFUSERS_MODEL_TYPE
 from dreamaze.training import (
     TrainingConfig,
     load_training_config,
@@ -15,6 +18,7 @@ from dreamaze.training_cli import run_training_cli
 
 
 def test_tiny_dataset_artifacts_flow_through_training_and_write_checkpoint(tmp_path):
+    _requires_diffusers_runtime()
     dataset_dir = tmp_path / "dataset"
     checkpoint_dir = tmp_path / "checkpoints"
     write_dataset_artifacts(
@@ -57,14 +61,16 @@ def test_tiny_dataset_artifacts_flow_through_training_and_write_checkpoint(tmp_p
     assert result.trained_examples == 2
     assert result.losses and result.losses[-1] > 0
     assert [checkpoint.name for checkpoint in result.checkpoints] == [
-        "checkpoint-step-000001.json"
+        "checkpoint-step-000001"
     ]
 
-    checkpoint = json.loads(result.checkpoints[0].read_text())
-    assert checkpoint["model_type"] == "custom_conditional_diffusion_solver"
+    checkpoint = json.loads((result.checkpoints[0] / "metadata.json").read_text())
+    assert checkpoint["model_type"] == DIFFUSERS_MODEL_TYPE
     assert checkpoint["training_step"] == 1
     assert checkpoint["config"]["sampling_steps"] == 3
     assert checkpoint["config"]["device"] == "cpu"
+    assert (result.checkpoints[0] / "unet").is_dir()
+    assert (result.checkpoints[0] / "scheduler").is_dir()
 
 
 def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
@@ -105,6 +111,7 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
 
 
 def test_training_config_controls_checkpoint_cadence(tmp_path):
+    _requires_diffusers_runtime()
     dataset_dir = tmp_path / "dataset"
     checkpoint_dir = tmp_path / "checkpoints"
     write_dataset_artifacts(
@@ -138,14 +145,15 @@ def test_training_config_controls_checkpoint_cadence(tmp_path):
 
     assert len(result.losses) == 3
     assert [checkpoint.name for checkpoint in result.checkpoints] == [
-        "checkpoint-step-000002.json"
+        "checkpoint-step-000002"
     ]
-    assert [checkpoint.name for checkpoint in checkpoint_dir.glob("*.json")] == [
-        "checkpoint-step-000002.json"
+    assert [checkpoint.name for checkpoint in checkpoint_dir.iterdir()] == [
+        "checkpoint-step-000002"
     ]
 
 
 def test_training_cli_runs_smoke_training_from_config_file(tmp_path, capsys):
+    _requires_diffusers_runtime()
     dataset_dir = tmp_path / "dataset"
     checkpoint_dir = tmp_path / "checkpoints"
     config_path = tmp_path / "training.json"
@@ -186,8 +194,16 @@ def test_training_cli_runs_smoke_training_from_config_file(tmp_path, capsys):
     exit_code = run_training_cli(["--config", str(config_path)])
 
     assert exit_code == 0
-    assert (checkpoint_dir / "checkpoint-step-000001.json").exists()
+    assert (checkpoint_dir / "checkpoint-step-000001" / "metadata.json").exists()
     report = capsys.readouterr().out
     assert "Conditional Diffusion Solver training complete" in report
     assert "Training steps: 1" in report
     assert "Checkpoints written: 1" in report
+
+
+def _requires_diffusers_runtime() -> None:
+    try:
+        import torch  # noqa: F401
+        import diffusers  # noqa: F401
+    except ImportError as error:
+        pytest.skip(f"Diffusers runtime is unavailable locally: {error}")

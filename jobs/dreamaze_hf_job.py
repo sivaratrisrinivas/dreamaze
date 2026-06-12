@@ -1,7 +1,10 @@
 # /// script
 # dependencies = [
 #   "dreamaze @ git+https://github.com/sivaratrisrinivas/dreamaze.git",
+#   "diffusers>=0.36",
 #   "huggingface-hub>=0.36",
+#   "safetensors>=0.4",
+#   "torch>=2.3",
 # ]
 # ///
 
@@ -69,6 +72,8 @@ def main() -> int:
         retry_count=args.retry_count,
         seed=args.evaluation_seed,
         report_path=evaluation_output,
+        device=args.device,
+        precision=args.precision,
     )
     evaluation_result = evaluate_conditional_diffusion_solver(evaluation_config)
     evaluation_output.parent.mkdir(parents=True, exist_ok=True)

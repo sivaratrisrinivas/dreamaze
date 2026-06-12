@@ -51,9 +51,10 @@ Training and the proof demo are planned for Hugging Face. Training should run on
 Dreamaze now includes Graph Validation for proposed Solution Masks, Dataset
 Builder support for deterministic Kruskal and Wilson Training Examples plus
 deterministic train, validation, and test Dataset Splits, a small Conditional
-Diffusion Solver training tracer bullet, evaluation, Hugging Face Jobs launch
-packaging, and a Hugging Face Spaces Proof Demo target. The Dataset Builder can
-persist those splits as sharded Dataset Artifacts with a resumable manifest.
+Diffusion Solver implemented with Hugging Face Diffusers, evaluation, Hugging
+Face Jobs launch packaging, and a Hugging Face Spaces Proof Demo target. The
+Dataset Builder can persist those splits as sharded Dataset Artifacts with a
+resumable manifest.
 
 The Proof Demo has been updated with a fully automated, intuitive user
 experience: visitors see only a single prominent "Solve New Maze" button and
@@ -129,11 +130,12 @@ Training Examples. Re-running the command against a completed matching manifest
 resumes by reusing the existing Dataset Artifacts after the writer verifies
 shard integrity.
 
-The first training tracer bullet is intentionally small and CPU-friendly. It
-loads sharded Dataset Artifacts, conditions on Maze Condition arrays, trains a
-custom Conditional Diffusion Solver toward Solution Masks, and writes JSON
-checkpoints. It is a smoke path for training infrastructure, not a claim that
-Dreamaze has reached the First Success Target.
+The training path uses a custom Conditional Diffusion Solver implemented with
+Hugging Face Diffusers `UNet2DModel`. It loads sharded Dataset Artifacts,
+conditions on Maze Condition arrays, trains from scratch toward Solution Masks,
+and writes Diffusers checkpoint directories containing the UNet, scheduler, and
+Dreamaze metadata. This is the single Runtime Solving model path; Dreamaze does
+not use Stable Diffusion or fixture weights for the Proof Demo.
 
 Create a training config such as:
 
@@ -166,12 +168,14 @@ a config such as:
 ```json
 {
   "dataset_dir": "./artifacts/tiny",
-  "checkpoint_path": "./artifacts/checkpoints/checkpoint-step-000001.json",
+  "checkpoint_path": "./artifacts/checkpoints/checkpoint-step-000001",
   "split": "validation",
   "sampling_steps": 3,
   "retry_count": 1,
   "seed": 456,
-  "report_path": "./artifacts/evaluation.json"
+  "report_path": "./artifacts/evaluation.json",
+  "device": "cpu",
+  "precision": "float32"
 }
 ```
 
@@ -277,7 +281,7 @@ replace Runtime Solving.
 The public demo UI has been deliberately simplified and automated per user
 request: end users see **only a single prominent "Solve New Maze" (or "Play")
 button and the result area**. All configuration is handled internally with
-good defaults (e.g. 16 sampling steps for visible animation length, fresh
+good defaults (e.g. 32 sampling steps for visible animation length, fresh
 varied Grid Mazes on every invocation via randomized seeds within safe ranges,
 single-sample execution for the official score, debug reveal disabled). This
 keeps the experience extremely intuitive while still exercising the full
@@ -295,17 +299,15 @@ intermediate states from the solver (exposed via the new
 `sample_conditional_diffusion_solution_mask_trajectory` helper) so it
 faithfully represents the diffusion process rather than a post-hoc effect.
 
-The Space can still run from a trained checkpoint by setting:
+The Space requires a trained Dreamaze Diffusers checkpoint directory:
 
 ```bash
-DREAMAZE_CHECKPOINT_PATH=/path/to/checkpoint-step-000001.json
+DREAMAZE_CHECKPOINT_PATH=/path/to/checkpoint-step-000001
 ```
 
-If that variable is unset, the demo uses the configured tiny fixture checkpoint
-so the browser UI and validation states can be smoke-tested before a real model
-artifact is uploaded. The underlying `ProofDemoConfig` / `run_proof_demo` /
-`build_diffusion_viz_html` library APIs remain fully configurable for tests,
-CI, and advanced usage.
+If that variable is unset or points to a missing checkpoint, the Space fails at
+startup. The public demo is considered deployable only when a Trained Solver
+Checkpoint is configured.
 
 The first public deployment is:
 
@@ -314,19 +316,18 @@ The first public deployment is:
 - Solver model repo: <https://huggingface.co/Srini410/dreamaze-solver>
 
 The Proof Demo Space runs on Hugging Face ZeroGPU because the deployment target
-is a public learned-solver demo. The current demo still falls back to the tiny
-fixture checkpoint until a trained checkpoint is uploaded and
-`DREAMAZE_CHECKPOINT_PATH` points to it.
+is a public learned-solver demo.
 
-The current public Space is configured with the initial trained tracer-bullet
+The earlier public Space was configured with the initial trained tracer-bullet
 checkpoint:
 
 - Checkpoint: <https://huggingface.co/Srini410/dreamaze-solver/blob/main/checkpoints/checkpoint-step-000020.json>
 - Evaluation report: <https://huggingface.co/datasets/Srini410/dreamaze-artifacts/blob/main/runs/tiny-trained-step-000020/evaluation.json>
 
-This checkpoint proves the deployment path can load a trained
-Conditional Diffusion Solver checkpoint, but it does not meet the First Success
-Target. Its tiny validation run reported 0.0 Single-Sample Success.
+That checkpoint proved the deployment path could load a trained solver, but it
+does not meet the First Success Target. Its tiny validation run reported 0.0
+Single-Sample Success. The current model path is the Diffusers checkpoint
+directory format described above.
 
 To create the deployment repos with the installed `hf` CLI:
 
@@ -351,8 +352,7 @@ Set the Space hardware to ZeroGPU with the Hub API:
 python -c "from huggingface_hub import HfApi, SpaceHardware; HfApi().request_space_hardware('Srini410/dreamaze-proof-demo', SpaceHardware.ZERO_A10G)"
 ```
 
-Use `cpu-basic` for the tiny fixture because it has no creator GPU cost. Use
-`zero-a10g` when the account is eligible for ZeroGPU and queued/free GPU
+Use `zero-a10g` when the account is eligible for ZeroGPU and queued/free GPU
 execution is preferable to predictable latency. Move to paid dedicated GPU
 hardware only when the trained checkpoint needs lower latency or more reliable
 capacity, because the Space owner is billed while that hardware is attached.
