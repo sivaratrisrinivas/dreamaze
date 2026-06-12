@@ -46,7 +46,7 @@ _BEST_GPU_PROFILE = {
     "max_train_steps": 5000,
     "checkpoint_every_steps": 250,
     "device": "cuda",
-    "precision": "float16",
+    "precision": "bfloat16",
     "num_workers": 4,
     "env": {"HF_XET_HIGH_PERFORMANCE": "1"},
 }

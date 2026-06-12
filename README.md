@@ -248,7 +248,7 @@ remote smoke job behave as expected.
 
 For the strongest GPU path that fits the current single-process trainer, use
 the `best_gpu` compute profile. It resolves to the `a100-large` Hugging Face
-Jobs hardware flavor, CUDA device settings, float16 precision, the First
+Jobs hardware flavor, CUDA device settings, bfloat16 precision, the First
 Dataset Size preset, and longer training defaults:
 
 ```json
