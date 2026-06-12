@@ -146,6 +146,34 @@ Then run:
 dreamaze-train --config ./training.json
 ```
 
+Evaluate a checkpoint against unseen validation or test Dataset Artifacts with
+a config such as:
+
+```json
+{
+  "dataset_dir": "./artifacts/tiny",
+  "checkpoint_path": "./artifacts/checkpoints/checkpoint-step-000001.json",
+  "split": "validation",
+  "sampling_steps": 3,
+  "retry_count": 1,
+  "seed": 456,
+  "report_path": "./artifacts/evaluation.json"
+}
+```
+
+Then run:
+
+```bash
+dreamaze-evaluate --config ./evaluation.json
+```
+
+The evaluation report records the Dataset Split, checkpoint identity, sampling
+settings, Single-Sample Success as the official Valid-Solution Rate, optional
+Retry Success marked as excluded from the official score, mask overlap, and
+Validation Reason failure counts. Evaluation samples Solution Masks from the
+checkpoint and validates them; it does not use a classical solver to repair or
+replace Runtime Solving.
+
 Run the test suite with:
 
 ```bash

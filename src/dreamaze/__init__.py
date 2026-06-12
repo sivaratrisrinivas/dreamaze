@@ -20,6 +20,13 @@ from dreamaze.dataset import (
     build_training_example,
     build_wilson_training_example,
 )
+from dreamaze.evaluation import (
+    EvaluationConfig,
+    EvaluationMetric,
+    EvaluationResult,
+    evaluate_conditional_diffusion_solver,
+    load_evaluation_config,
+)
 from dreamaze.training import (
     TrainingConfig,
     TrainingResult,
@@ -43,6 +50,9 @@ __all__ = [
     "DatasetSplit",
     "DatasetSplitName",
     "DatasetSplits",
+    "EvaluationConfig",
+    "EvaluationMetric",
+    "EvaluationResult",
     "MazeCondition",
     "MazeFamily",
     "SolutionValidationResult",
@@ -55,6 +65,8 @@ __all__ = [
     "build_kruskal_training_example",
     "build_training_example",
     "build_wilson_training_example",
+    "evaluate_conditional_diffusion_solver",
+    "load_evaluation_config",
     "load_training_config",
     "train_conditional_diffusion_solver",
     "validate_solution_mask",
