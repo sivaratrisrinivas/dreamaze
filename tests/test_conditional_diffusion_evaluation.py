@@ -13,6 +13,7 @@ from dreamaze.evaluation import (
     load_evaluation_config,
     _aggregate_endpoint_raw_value_diagnostics,
     _endpoint_inclusion_payload,
+    _endpoint_raw_value_example_payload,
     _endpoint_raw_value_diagnostics,
     _mask_includes_cell,
     _mask_overlap_excluding_cells,
@@ -113,6 +114,8 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     assert "endpoint_inclusion" in report
     assert "sampled_tensor_stats" in report
     assert "endpoint_raw_values" in report
+    assert "endpoint_raw_value_examples" in report
+    assert len(report["endpoint_raw_value_examples"]) == 2
     assert "raw_mean" in report["sampled_tensor_stats"]
     assert "start_cell_raw_mean" in report["endpoint_raw_values"]
     assert "goal_cell_raw_mean" in report["endpoint_raw_values"]
@@ -182,6 +185,7 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     assert "endpoint_inclusion" in report
     assert "sampled_tensor_stats" in report
     assert "endpoint_raw_values" in report
+    assert "endpoint_raw_value_examples" in report
     cli_output = capsys.readouterr().out
     assert "Conditional Diffusion Solver evaluation complete" in cli_output
     assert "Official score: Single-Sample Success" in cli_output
@@ -253,6 +257,48 @@ def test_aggregate_endpoint_raw_value_diagnostics_reports_means_and_extremes():
     assert payload["non_label_cell_raw_max"] == 0.8
     assert payload["start_cell_descending_rank_mean"] == pytest.approx(3.0)
     assert payload["goal_cell_descending_rank_mean"] == pytest.approx(2.0)
+
+
+def test_endpoint_raw_value_example_payload_reports_failure_context():
+    diagnostics = _endpoint_raw_value_diagnostics(
+        raw_values=(
+            (-0.1, 0.8),
+            (0.2, -0.4),
+        ),
+        label_mask=(
+            (1, 1),
+            (0, 0),
+        ),
+        start_cell=(0, 0),
+        goal_cell=(0, 1),
+    )
+
+    payload = _endpoint_raw_value_example_payload(
+        example_index=3,
+        validation_failure_reason="missing_start",
+        start_cell_included=False,
+        goal_cell_included=True,
+        diagnostics=diagnostics,
+        tensor_stats_marked_count=2,
+        tensor_stats_fraction_at_or_above_threshold=0.5,
+    )
+
+    assert payload == {
+        "example_index": 3,
+        "validation_failure_reason": "missing_start",
+        "start_cell_included": False,
+        "goal_cell_included": True,
+        "start_cell_raw_value": -0.1,
+        "goal_cell_raw_value": 0.8,
+        "start_cell_descending_rank": 3,
+        "goal_cell_descending_rank": 1,
+        "start_cell_percentile": 0.5,
+        "goal_cell_percentile": 1.0,
+        "label_cell_raw_mean": pytest.approx(0.35),
+        "non_label_cell_raw_mean": pytest.approx(-0.1),
+        "marked_count": 2,
+        "fraction_at_or_above_threshold": 0.5,
+    }
 
 
 def test_endpoint_inclusion_payload_reports_separate_endpoint_rates():

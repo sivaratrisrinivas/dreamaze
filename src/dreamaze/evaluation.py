@@ -70,6 +70,7 @@ class EvaluationResult:
     endpoint_inclusion: Mapping[str, float | int]
     sampled_tensor_stats: Mapping[str, float | int]
     endpoint_raw_values: Mapping[str, float | int]
+    endpoint_raw_value_examples: tuple[Mapping[str, Any], ...]
     failure_reason_counts: Mapping[str, int]
 
     def to_json(self) -> str:
@@ -95,6 +96,9 @@ class EvaluationResult:
             "endpoint_inclusion": dict(self.endpoint_inclusion),
             "sampled_tensor_stats": dict(self.sampled_tensor_stats),
             "endpoint_raw_values": dict(self.endpoint_raw_values),
+            "endpoint_raw_value_examples": [
+                dict(item) for item in self.endpoint_raw_value_examples
+            ],
             "failure_reason_counts": dict(self.failure_reason_counts),
         }
         if self.retry_success is not None:
@@ -185,6 +189,7 @@ def evaluate_conditional_diffusion_solver(
     both_endpoints_included_count = 0
     sampled_tensor_stats: list[SampledTensorStats] = []
     endpoint_raw_value_diagnostics: list[EndpointRawValueDiagnostics] = []
+    endpoint_raw_value_examples: list[Mapping[str, Any]] = []
 
     for index, example in enumerate(examples):
         first_sample = sample_conditional_diffusion_solution_mask_with_stats(
@@ -197,14 +202,13 @@ def evaluate_conditional_diffusion_solver(
         sampled_tensor_stats.append(first_sample.tensor_stats)
         rendered_start_cell = _rendered_cell(example.start_cell)
         rendered_goal_cell = _rendered_cell(example.goal_cell)
-        endpoint_raw_value_diagnostics.append(
-            _endpoint_raw_value_diagnostics(
-                raw_values=first_sample.raw_values,
-                label_mask=example.solution_mask,
-                start_cell=rendered_start_cell,
-                goal_cell=rendered_goal_cell,
-            )
+        endpoint_diagnostics = _endpoint_raw_value_diagnostics(
+            raw_values=first_sample.raw_values,
+            label_mask=example.solution_mask,
+            start_cell=rendered_start_cell,
+            goal_cell=rendered_goal_cell,
         )
+        endpoint_raw_value_diagnostics.append(endpoint_diagnostics)
         first_result = validate_solution_mask(
             grid_maze=_bool_grid(example.maze_condition),
             solution_mask=first_mask,
@@ -222,6 +226,21 @@ def evaluate_conditional_diffusion_solver(
             goal_cell_included_count += 1
         if start_cell_included and goal_cell_included:
             both_endpoints_included_count += 1
+        endpoint_raw_value_examples.append(
+            _endpoint_raw_value_example_payload(
+                example_index=index,
+                validation_failure_reason=(
+                    None if first_result.reason is None else str(first_result.reason)
+                ),
+                start_cell_included=start_cell_included,
+                goal_cell_included=goal_cell_included,
+                diagnostics=endpoint_diagnostics,
+                tensor_stats_marked_count=first_sample.tensor_stats.marked_count,
+                tensor_stats_fraction_at_or_above_threshold=(
+                    first_sample.tensor_stats.fraction_at_or_above_threshold
+                ),
+            )
+        )
         body_mask_overlaps.append(
             _mask_overlap_excluding_cells(
                 proposed_mask=first_mask,
@@ -284,6 +303,7 @@ def evaluate_conditional_diffusion_solver(
         endpoint_raw_values=_aggregate_endpoint_raw_value_diagnostics(
             endpoint_raw_value_diagnostics
         ),
+        endpoint_raw_value_examples=tuple(endpoint_raw_value_examples),
         failure_reason_counts=dict(sorted(failure_reasons.items())),
     )
 
@@ -688,6 +708,36 @@ def _aggregate_endpoint_raw_value_diagnostics(
         ),
         "goal_cell_percentile_mean": _mean(
             [item.goal_cell_percentile for item in diagnostics]
+        ),
+    }
+
+
+def _endpoint_raw_value_example_payload(
+    *,
+    example_index: int,
+    validation_failure_reason: str | None,
+    start_cell_included: bool,
+    goal_cell_included: bool,
+    diagnostics: EndpointRawValueDiagnostics,
+    tensor_stats_marked_count: int,
+    tensor_stats_fraction_at_or_above_threshold: float,
+) -> Mapping[str, float | int | bool | str | None]:
+    return {
+        "example_index": example_index,
+        "validation_failure_reason": validation_failure_reason,
+        "start_cell_included": start_cell_included,
+        "goal_cell_included": goal_cell_included,
+        "start_cell_raw_value": diagnostics.start_cell_raw_value,
+        "goal_cell_raw_value": diagnostics.goal_cell_raw_value,
+        "start_cell_descending_rank": diagnostics.start_cell_descending_rank,
+        "goal_cell_descending_rank": diagnostics.goal_cell_descending_rank,
+        "start_cell_percentile": diagnostics.start_cell_percentile,
+        "goal_cell_percentile": diagnostics.goal_cell_percentile,
+        "label_cell_raw_mean": diagnostics.label_cell_raw_mean,
+        "non_label_cell_raw_mean": diagnostics.non_label_cell_raw_mean,
+        "marked_count": tensor_stats_marked_count,
+        "fraction_at_or_above_threshold": (
+            tensor_stats_fraction_at_or_above_threshold
         ),
     }
 
