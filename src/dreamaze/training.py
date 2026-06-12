@@ -219,13 +219,24 @@ def _training_batch(
 
 def _batch_tensors(*, torch, batch, device, dtype, sample_size: tuple[int, int]):
     condition_rows = [_condition_channels(example) for example in batch]
-    target_rows = [[example.solution_mask] for example in batch]
+    target_rows = [_solution_mask_target_channels(example) for example in batch]
     tensor_dtype = dtype or torch.float32
     condition = torch.tensor(condition_rows, dtype=tensor_dtype, device=device)
     target = torch.tensor(target_rows, dtype=tensor_dtype, device=device)
     condition = _pad_to_sample_size(torch, condition, sample_size)
     target = _pad_to_sample_size(torch, target, sample_size)
     return condition, target
+
+
+def _solution_mask_target_channels(
+    example: TrainingExampleArrays,
+) -> list[list[list[float]]]:
+    return [
+        [
+            [1.0 if value else -1.0 for value in row]
+            for row in example.solution_mask
+        ]
+    ]
 
 
 def _condition_channels(example: TrainingExampleArrays) -> list[list[list[float]]]:

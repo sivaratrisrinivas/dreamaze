@@ -11,7 +11,9 @@ from dreamaze.dataset import (
 from dreamaze.training import DIFFUSERS_MODEL_TYPE
 from dreamaze.training import (
     TrainingConfig,
+    TrainingExampleArrays,
     load_training_config,
+    _solution_mask_target_channels,
     train_conditional_diffusion_solver,
 )
 from dreamaze.training_cli import run_training_cli
@@ -108,6 +110,22 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
     assert config.device == "cpu"
     assert config.precision == "float32"
     assert config.num_workers == 0
+
+
+def test_training_encodes_solution_mask_targets_symmetrically():
+    example = TrainingExampleArrays(
+        maze_condition=((1, 1), (1, 1)),
+        solution_mask=((0, 1), (1, 0)),
+        start_cell=(0, 0),
+        goal_cell=(1, 1),
+    )
+
+    assert _solution_mask_target_channels(example) == [
+        [
+            [-1.0, 1.0],
+            [1.0, -1.0],
+        ]
+    ]
 
 
 def test_training_config_controls_checkpoint_cadence(tmp_path):

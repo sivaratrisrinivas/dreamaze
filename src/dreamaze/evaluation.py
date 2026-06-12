@@ -67,6 +67,7 @@ class EvaluationResult:
     single_sample_success: EvaluationMetric
     retry_success: EvaluationMetric | None
     mask_overlap: float
+    sampled_tensor_stats: Mapping[str, float | int]
     failure_reason_counts: Mapping[str, int]
 
     def to_json(self) -> str:
@@ -89,6 +90,7 @@ class EvaluationResult:
             "official_score": "single_sample_success",
             "single_sample_success": self.single_sample_success.to_payload(),
             "mask_overlap": self.mask_overlap,
+            "sampled_tensor_stats": dict(self.sampled_tensor_stats),
             "failure_reason_counts": dict(self.failure_reason_counts),
         }
         if self.retry_success is not None:
@@ -101,6 +103,32 @@ class ConditionalDiffusionSamplingExample:
     maze_condition: tuple[tuple[int, ...], ...]
     start_cell: tuple[int, int]
     goal_cell: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class SampledTensorStats:
+    raw_min: float
+    raw_max: float
+    raw_mean: float
+    fraction_at_or_above_threshold: float
+    marked_count: int
+    total_cells: int
+
+    def to_payload(self) -> Mapping[str, float | int]:
+        return {
+            "raw_min": self.raw_min,
+            "raw_max": self.raw_max,
+            "raw_mean": self.raw_mean,
+            "fraction_at_or_above_threshold": self.fraction_at_or_above_threshold,
+            "marked_count": self.marked_count,
+            "total_cells": self.total_cells,
+        }
+
+
+@dataclass(frozen=True)
+class SampledSolutionMask:
+    mask: tuple[tuple[bool, ...], ...]
+    tensor_stats: SampledTensorStats
 
 
 @dataclass(frozen=True)
@@ -130,14 +158,17 @@ def evaluate_conditional_diffusion_solver(
     retry_valid_count = 0
     failure_reasons: Counter[str] = Counter()
     mask_overlaps: list[float] = []
+    sampled_tensor_stats: list[SampledTensorStats] = []
 
     for index, example in enumerate(examples):
-        first_mask = sample_conditional_diffusion_solution_mask(
+        first_sample = sample_conditional_diffusion_solution_mask_with_stats(
             example=_sampling_example_from_arrays(example),
             solver=solver,
             sampling_steps=config.sampling_steps,
             seed=config.seed + index,
         )
+        first_mask = first_sample.mask
+        sampled_tensor_stats.append(first_sample.tensor_stats)
         first_result = validate_solution_mask(
             grid_maze=_bool_grid(example.maze_condition),
             solution_mask=first_mask,
@@ -191,6 +222,7 @@ def evaluate_conditional_diffusion_solver(
         single_sample_success=single_sample_success,
         retry_success=retry_success,
         mask_overlap=sum(mask_overlaps) / evaluated_examples,
+        sampled_tensor_stats=_aggregate_sampled_tensor_stats(sampled_tensor_stats),
         failure_reason_counts=dict(sorted(failure_reasons.items())),
     )
 
@@ -233,11 +265,28 @@ def sample_conditional_diffusion_solution_mask(
     sampling_steps: int,
     seed: int,
 ) -> tuple[tuple[bool, ...], ...]:
-    trajectory = sample_conditional_diffusion_solution_mask_trajectory(
+    return sample_conditional_diffusion_solution_mask_with_stats(
         example=example,
         solver=solver,
         sampling_steps=sampling_steps,
         seed=seed,
+    ).mask
+
+
+def sample_conditional_diffusion_solution_mask_with_stats(
+    *,
+    example: ConditionalDiffusionSamplingExample,
+    solver: _LoadedDiffusersSolver,
+    sampling_steps: int,
+    seed: int,
+) -> SampledSolutionMask:
+    trajectory = list(
+        _iter_conditional_diffusion_solution_mask_samples(
+            example=example,
+            solver=solver,
+            sampling_steps=sampling_steps,
+            seed=seed,
+        )
     )
     return trajectory[-1]
 
@@ -266,6 +315,22 @@ def iter_conditional_diffusion_solution_mask_trajectory(
     sampling_steps: int,
     seed: int,
 ) -> Iterator[tuple[tuple[bool, ...], ...]]:
+    for sample in _iter_conditional_diffusion_solution_mask_samples(
+        example=example,
+        solver=solver,
+        sampling_steps=sampling_steps,
+        seed=seed,
+    ):
+        yield sample.mask
+
+
+def _iter_conditional_diffusion_solution_mask_samples(
+    *,
+    example: ConditionalDiffusionSamplingExample,
+    solver: _LoadedDiffusersSolver,
+    sampling_steps: int,
+    seed: int,
+) -> Iterator[SampledSolutionMask]:
     if sampling_steps < 1:
         raise ValueError("Conditional Diffusion Solver sampling steps must be positive")
 
@@ -290,7 +355,7 @@ def iter_conditional_diffusion_solution_mask_trajectory(
         dtype=solver.dtype,
     ).to(solver.device)
 
-    yield _tensor_to_mask(noisy_mask, original_rows, original_columns)
+    yield _tensor_to_mask_sample(noisy_mask, original_rows, original_columns)
     solver.scheduler.set_timesteps(sampling_steps, device=solver.device)
 
     with torch.no_grad():
@@ -303,7 +368,7 @@ def iter_conditional_diffusion_solution_mask_trajectory(
                 noisy_mask,
                 generator=generator,
             ).prev_sample
-            yield _tensor_to_mask(noisy_mask, original_rows, original_columns)
+            yield _tensor_to_mask_sample(noisy_mask, original_rows, original_columns)
 
 
 def load_evaluation_config(path: str | Path) -> EvaluationConfig:
@@ -410,13 +475,54 @@ def _sampling_condition_tensor(*, torch, example, device, dtype, sample_size):
     return _pad_to_sample_size(torch, condition, sample_size)
 
 
-def _tensor_to_mask(tensor, rows: int, columns: int) -> tuple[tuple[bool, ...], ...]:
+def _tensor_to_mask_sample(tensor, rows: int, columns: int) -> SampledSolutionMask:
     cropped = tensor.detach().float().cpu()[0, 0, :rows, :columns]
-    probabilities = cropped.sigmoid()
-    return tuple(
-        tuple(bool(value >= 0.5) for value in row.tolist())
-        for row in probabilities
+    mask = tuple(
+        tuple(bool(value >= 0.0) for value in row.tolist())
+        for row in cropped
     )
+    marked_count = sum(1 for row in mask for value in row if value)
+    total_cells = rows * columns
+    return SampledSolutionMask(
+        mask=mask,
+        tensor_stats=SampledTensorStats(
+            raw_min=float(cropped.min()),
+            raw_max=float(cropped.max()),
+            raw_mean=float(cropped.mean()),
+            fraction_at_or_above_threshold=marked_count / total_cells,
+            marked_count=marked_count,
+            total_cells=total_cells,
+        ),
+    )
+
+
+def _tensor_to_mask(tensor, rows: int, columns: int) -> tuple[tuple[bool, ...], ...]:
+    return _tensor_to_mask_sample(tensor, rows, columns).mask
+
+
+def _aggregate_sampled_tensor_stats(
+    stats: list[SampledTensorStats],
+) -> Mapping[str, float | int]:
+    if not stats:
+        return {
+            "raw_min": 0.0,
+            "raw_max": 0.0,
+            "raw_mean": 0.0,
+            "fraction_at_or_above_threshold": 0.0,
+            "marked_count_mean": 0.0,
+            "total_cells": 0,
+        }
+    return {
+        "raw_min": min(item.raw_min for item in stats),
+        "raw_max": max(item.raw_max for item in stats),
+        "raw_mean": sum(item.raw_mean for item in stats) / len(stats),
+        "fraction_at_or_above_threshold": sum(
+            item.fraction_at_or_above_threshold for item in stats
+        )
+        / len(stats),
+        "marked_count_mean": sum(item.marked_count for item in stats) / len(stats),
+        "total_cells": sum(item.total_cells for item in stats),
+    }
 
 
 def _mask_overlap(

@@ -75,6 +75,13 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     )
     assert result.retry_success.excluded_from_official_score is True
     assert 0.0 <= result.mask_overlap <= 1.0
+    assert result.sampled_tensor_stats["total_cells"] == 162
+    assert result.sampled_tensor_stats["raw_min"] <= result.sampled_tensor_stats["raw_max"]
+    assert (
+        0.0
+        <= result.sampled_tensor_stats["fraction_at_or_above_threshold"]
+        <= 1.0
+    )
     assert sum(result.failure_reason_counts.values()) == (
         result.evaluated_examples - result.single_sample_success.valid_count
     )
@@ -86,6 +93,8 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     assert report["sampling"]["retry_count"] == 1
     assert report["sampling"]["seed"] == 11
     assert report["official_score"] == "single_sample_success"
+    assert "sampled_tensor_stats" in report
+    assert "raw_mean" in report["sampled_tensor_stats"]
     assert report["retry_success"]["excluded_from_official_score"] is True
 
 
@@ -149,6 +158,7 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     assert report["checkpoint"]["path"] == str(training_result.checkpoints[-1])
     assert report["official_score"] == "single_sample_success"
     assert "failure_reason_counts" in report
+    assert "sampled_tensor_stats" in report
     cli_output = capsys.readouterr().out
     assert "Conditional Diffusion Solver evaluation complete" in cli_output
     assert "Official score: Single-Sample Success" in cli_output

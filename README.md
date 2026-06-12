@@ -64,6 +64,13 @@ Evaluate a checkpoint:
 dreamaze-evaluate --config ./evaluation.json
 ```
 
+Run the tiny overfit diagnostic before spending on another long GPU run:
+
+```bash
+DREAMAZE_RUN_OVERFIT_DIAGNOSTIC=1 \
+pytest -q tests/test_conditional_diffusion_overfit_diagnostic.py
+```
+
 Launch a Hugging Face Job:
 
 ```bash

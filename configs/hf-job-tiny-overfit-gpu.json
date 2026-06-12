@@ -1,0 +1,24 @@
+{
+  "hardware_flavor": "t4-small",
+  "timeout": "1h",
+  "namespace": "Srini410",
+  "dataset_preset": "tiny",
+  "batch_size": 3,
+  "sampling_steps": 8,
+  "max_train_steps": 500,
+  "checkpoint_every_steps": 500,
+  "learning_rate": 0.001,
+  "training_seed": 610,
+  "evaluation_seed": 611,
+  "retry_count": 0,
+  "eval_split": "train",
+  "device": "cuda",
+  "precision": "float16",
+  "num_workers": 0,
+  "output_repo": "Srini410/dreamaze-artifacts",
+  "output_repo_type": "dataset",
+  "output_path_in_repo": "runs/diffusers-t4-tiny-overfit-20260613",
+  "env": {
+    "HF_XET_HIGH_PERFORMANCE": "1"
+  }
+}
