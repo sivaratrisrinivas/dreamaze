@@ -7,6 +7,7 @@ from pathlib import Path
 from dreamaze.proof_demo import (
     ProofDemoResult,
     build_diffusion_viz_html,
+    iter_proof_demo_stream_events,
     run_proof_demo,
 )
 from dreamaze.validation import SolutionValidationResult
@@ -39,9 +40,8 @@ def test_diffusion_viz_html_animates_captured_trajectory():
     )
 
     assert "Conditional Diffusion Solver trajectory" in html
-    assert "Single-Sample Success" in html
     assert "FRAMES" in html
-    assert "Replay solving steps" in html
+    assert "STEP_MS = 750" in html
     assert "fixture" not in html.lower()
 
 
@@ -52,6 +52,39 @@ def test_diffusion_viz_html_falls_back_without_trajectory():
 
     assert "dreamaze-fallback" in html
     assert "Valid Solution" in html
+
+
+def test_proof_demo_stream_events_emit_init_frames_and_done(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    masks = [
+        ((False, False, False), (False, True, False), (False, False, False)),
+        ((False, True, False), (False, True, False), (False, True, False)),
+    ]
+
+    monkeypatch.setattr(
+        "dreamaze.proof_demo.load_diffusers_solver_checkpoint",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "dreamaze.proof_demo.iter_conditional_diffusion_solution_mask_trajectory",
+        lambda **_kwargs: iter(masks),
+    )
+
+    events = list(
+        iter_proof_demo_stream_events(_minimal_config(checkpoint_path=checkpoint_dir))
+    )
+
+    assert events[0]["type"] == "init"
+    assert events[0]["totalSteps"] == 2
+    assert events[1] == {
+        "type": "frame",
+        "step": 0,
+        "mask": [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+    }
+    assert events[2]["type"] == "frame"
+    assert events[-1]["type"] == "done"
+    assert events[-1]["validationStatus"] in {"Valid Solution", "Invalid Solution"}
 
 
 def test_space_app_requires_checkpoint_at_startup(monkeypatch):
@@ -137,6 +170,33 @@ def test_space_app_solve_endpoint_returns_visualization_html(monkeypatch, tmp_pa
     monkeypatch.setattr(module, "_run_automated_for_http", lambda: "<div>solved</div>")
 
     assert module.solve_new_maze() == {"html": "<div>solved</div>"}
+
+
+def test_space_app_stream_endpoint_returns_event_stream(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    module = _load_space_app("dreamaze_space_stream_endpoint")
+
+    response = module.solve_new_maze_stream()
+
+    assert response.media_type == "text/event-stream"
+
+
+def test_space_app_stream_events_are_sse_encoded(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    module = _load_space_app("dreamaze_space_stream_sse")
+    monkeypatch.setattr(
+        module,
+        "_stream_automated_for_http",
+        lambda: iter([{"type": "frame", "step": 1, "mask": [[1]]}]),
+    )
+
+    assert list(module._stream_sse_events()) == [
+        'data: {"type":"frame","step":1,"mask":[[1]]}\n\n'
+    ]
 
 
 def _load_space_app(module_name: str):

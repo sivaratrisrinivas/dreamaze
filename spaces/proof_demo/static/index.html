@@ -8,18 +8,11 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="demo-panel" aria-labelledby="demo-title">
-        <div class="masthead">
-          <p class="eyebrow">Dreamaze Proof Demo</p>
-          <h1 id="demo-title">Conditional Diffusion Solver</h1>
-        </div>
-
-        <div class="action-row">
-          <button id="solve-button" class="solve-button" type="button">
-            <span class="button-label">Solve New Maze</span>
-            <span class="button-spinner" aria-hidden="true"></span>
-          </button>
-        </div>
+      <section class="demo-panel" aria-label="Dreamaze maze solver">
+        <button id="solve-button" class="solve-button" type="button">
+          <span class="button-label">Solve New Maze</span>
+          <span class="button-spinner" aria-hidden="true"></span>
+        </button>
 
         <div
           id="status"
@@ -28,12 +21,7 @@
           aria-live="polite"
         ></div>
 
-        <div id="result" class="result" aria-live="polite">
-          <div class="empty-state">
-            <span class="empty-mark" aria-hidden="true"></span>
-            <p>Ready for a live single-sample solve.</p>
-          </div>
-        </div>
+        <div id="result" class="result" aria-live="polite" hidden></div>
       </section>
     </main>
     <script src="/static/app.js"></script>

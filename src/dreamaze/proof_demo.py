@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 from dreamaze.dataset import (
     BoolGrid,
@@ -12,6 +12,7 @@ from dreamaze.dataset import (
 )
 from dreamaze.evaluation import (
     ConditionalDiffusionSamplingExample,
+    iter_conditional_diffusion_solution_mask_trajectory,
     load_diffusers_solver_checkpoint,
     sample_conditional_diffusion_solution_mask,
     sample_conditional_diffusion_solution_mask_trajectory,
@@ -57,6 +58,69 @@ class ProofDemoResult:
     training_label_svg: str | None = None
     difference_svg: str | None = None
     diffusion_intermediates: list[tuple[tuple[bool, ...], ...]] | None = None
+
+
+def iter_proof_demo_stream_events(
+    config: ProofDemoConfig,
+) -> Iterator[Mapping[str, Any]]:
+    """Yield live proof-demo events while the Conditional Diffusion Solver samples.
+
+    Event contract:
+    - init: maze geometry and fixed start/goal cells
+    - frame: one generated Solution Mask at a denoising step
+    - done: final validation result for the model's final mask
+    """
+    _validate_proof_demo_config(config)
+    example = build_training_example(
+        seed=config.maze_seed,
+        config=TrainingExampleConfig(
+            width=config.width,
+            height=config.height,
+            maze_family=config.maze_family,
+            split="demo",
+        ),
+    )
+    solver = load_diffusers_solver_checkpoint(checkpoint_path=config.checkpoint_path)
+    sampling_example = _sampling_example_from_training_example(example)
+    total_steps = config.sampling_steps
+    yield {
+        "type": "init",
+        "renderedMaze": _numeric_grid(example.maze_condition.rendered_maze),
+        "startCell": list(example.rendered_start_cell),
+        "goalCell": list(example.rendered_goal_cell),
+        "totalSteps": total_steps,
+    }
+
+    generated_mask = None
+    for step, mask in enumerate(
+        iter_conditional_diffusion_solution_mask_trajectory(
+            example=sampling_example,
+            solver=solver,
+            sampling_steps=config.sampling_steps,
+            seed=config.seed,
+        )
+    ):
+        generated_mask = mask
+        yield {
+            "type": "frame",
+            "step": step,
+            "mask": _numeric_grid(mask),
+        }
+
+    if generated_mask is None:
+        raise RuntimeError("Conditional Diffusion Solver did not produce a mask")
+
+    validation = validate_solution_mask(
+        grid_maze=example.maze_condition.rendered_maze,
+        solution_mask=generated_mask,
+        start_cell=example.rendered_start_cell,
+        goal_cell=example.rendered_goal_cell,
+    )
+    yield {
+        "type": "done",
+        "validationStatus": "Valid Solution" if validation.valid else "Invalid Solution",
+        "validationReason": None if validation.reason is None else validation.reason.value,
+    }
 
 
 def run_proof_demo(config: ProofDemoConfig) -> ProofDemoResult:
@@ -303,6 +367,10 @@ def _int_grid(grid: Sequence[Sequence[bool]]) -> tuple[tuple[int, ...], ...]:
     return tuple(tuple(1 if value else 0 for value in row) for row in grid)
 
 
+def _numeric_grid(grid: Sequence[Sequence[bool]]) -> list[list[int]]:
+    return [[1 if value else 0 for value in row] for row in grid]
+
+
 def _validate_proof_demo_config(config: ProofDemoConfig) -> None:
     if config.width < 2 or config.height < 2:
         raise ValueError("Proof Demo maze dimensions must be at least 2 by 2")
@@ -396,7 +464,7 @@ def _build_automated_player_html(
     svg_parts: list[str] = [
         f'<svg id="{vid}-grid" viewBox="0 0 {width_px} {height_px}" '
         f'width="{width_px}" height="{height_px}" '
-        'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Maze with live diffusion solution animation">'
+        'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Maze with Conditional Diffusion Solver trajectory">'
     ]
     for ri, row in enumerate(rendered_maze):
         for ci, is_open in enumerate(row):
@@ -425,7 +493,6 @@ def _build_automated_player_html(
     frames_json = _json.dumps(frames)
     s_json = _json.dumps(list(rendered_start_cell))
     g_json = _json.dumps(list(rendered_goal_cell))
-    family_str = maze_family.value if hasattr(maze_family, "value") else str(maze_family)
     reason_html = (
         f'<div class="reason" style="color:#b91c1c;font-size:0.85em;margin-top:2px">'
         f'Validation reason: {validation_reason}</div>'
@@ -435,36 +502,18 @@ def _build_automated_player_html(
     verdict_class = "valid" if "Valid" in validation_status else "invalid"
     verdict_color = "#166534" if "Valid" in validation_status else "#991b1b"
 
-    html = f"""<div id="{vid}-wrap" style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto">
+    html = f"""<div id="{vid}-wrap" style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;text-align:center">
   <style>
-    #{vid}-wrap .dm-header {{font-size:13px;opacity:.75;margin-bottom:6px;letter-spacing:.3px}}
-    #{vid}-wrap .dm-grid-wrap {{border:1px solid #e5e7eb;border-radius:8px;padding:8px;background:#fff;display:inline-block;box-shadow:0 1px 2px rgb(0 0 0 / 0.04)}}
-    #{vid}-wrap .dm-controls {{display:flex;gap:8px;align-items:center;margin:8px 0 4px;font-size:12px}}
-    #{vid}-wrap button.dm-replay {{font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc;cursor:pointer}}
-    #{vid}-wrap button.dm-replay:hover {{background:#f1f5f9}}
-    #{vid}-wrap .dm-verdict {{display:inline-block;padding:2px 10px;border-radius:9999px;font-weight:600;font-size:0.95em;margin-top:4px}}
+    #{vid}-wrap .dm-grid-wrap {{display:inline-block;background:#fff}}
+    #{vid}-wrap .dm-progress {{margin-top:8px;color:#5d6972;font-size:12px}}
+    #{vid}-wrap .dm-verdict {{display:inline-block;padding:2px 8px;border-radius:6px;font-weight:600;font-size:12px;margin-top:8px}}
     #{vid}-wrap .dm-verdict.valid {{background:#dcfce7;color:#166534}}
     #{vid}-wrap .dm-verdict.invalid {{background:#fee2e2;color:#991b1b}}
-    #{vid}-wrap .dm-legend {{font-size:10px;opacity:.6;margin-top:6px;display:flex;gap:12px;flex-wrap:wrap}}
-    #{vid}-wrap .dm-legend span {{display:inline-flex;align-items:center;gap:4px}}
-    #{vid}-wrap .dm-legend i {{width:10px;height:10px;border:1px solid #cbd5e1}}
   </style>
-  <div class="dm-header">Maze (16\times16 Grid) + Conditional Diffusion Solver trajectory — {family_str} seed {maze_seed}</div>
   <div class="dm-grid-wrap">{base_svg}</div>
-  <div class="dm-controls">
-    <span>Refining path: <strong id="{vid}-step">0</strong> / {len(intermediates)-1}</span>
-    <button class="dm-replay" onclick="window.__dmzReplay_{vid}()">⟳ Replay solving steps</button>
-  </div>
+  <div class="dm-progress">Step <strong id="{vid}-step">0</strong> / {len(intermediates)-1}</div>
   <div class="dm-verdict {verdict_class}" style="background:{verdict_color}22;color:{verdict_color}">{validation_status}</div>
   {reason_html}
-  <div class="dm-legend">
-    <span><i style="background:#16a34a"></i> start</span>
-    <span><i style="background:#dc2626"></i> goal</span>
-    <span><i style="background:#2563eb"></i> model path claim (evolves)</span>
-    <span><i style="background:#f8fafc;border-color:#111827"></i> open passage</span>
-    <span><i style="background:#111827"></i> wall</span>
-  </div>
-  <div style="font-size:9px;opacity:.5;margin-top:4px">Single-Sample Success (official). The diffusion model proposes every cell of the Solution Mask itself.</div>
 <script>
 (function() {{
   const VID = '{vid}';
@@ -475,7 +524,7 @@ def _build_automated_player_html(
   const TOTAL = FRAMES.length - 1;
   let step = 0;
   let timer = null;
-  const STEP_MS = 210; // visible real-time pace for the denoising process
+  const STEP_MS = 750; // slow enough to inspect each denoising step
 
   function $(id) {{ return document.getElementById(id); }}
   function rect(r, c) {{ return $('{vid}-c-' + r + '-' + c); }}
@@ -528,7 +577,7 @@ def _build_automated_player_html(
   // Boot
   apply(0);
   // Auto-start the diffusion "thinking" animation shortly after mount for immediate "real time" feel
-  setTimeout(startAuto, 120);
+  setTimeout(startAuto, 450);
 }})();
 </script>
 </div>"""

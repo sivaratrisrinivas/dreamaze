@@ -1,11 +1,14 @@
 import os
 from pathlib import Path
 import random
+import json
 import sys
 import time
+from typing import Iterator
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 _SPACE_ROOT = Path(__file__).resolve().parent
@@ -14,7 +17,12 @@ if _SPACE_SRC_PATH.exists():
     sys.path.insert(0, str(_SPACE_SRC_PATH))
 
 from dreamaze.dataset import MazeFamily
-from dreamaze.proof_demo import ProofDemoConfig, build_diffusion_viz_html, run_proof_demo
+from dreamaze.proof_demo import (
+    ProofDemoConfig,
+    build_diffusion_viz_html,
+    iter_proof_demo_stream_events,
+    run_proof_demo,
+)
 
 
 _CHECKPOINT_ENV = os.environ.get("DREAMAZE_CHECKPOINT_PATH")
@@ -116,6 +124,53 @@ def run_automated_demo() -> str:
 
 _run_automated_for_http = run_automated_demo
 
+
+def stream_automated_demo_events() -> Iterator[dict]:
+    checkpoint_path = _resolve_checkpoint_path()
+    if checkpoint_path is None:
+        yield {
+            "type": "error",
+            "message": (
+                "UI smoke mode is active. Configure a trained Dreamaze Diffusers "
+                "checkpoint to stream Runtime Solving."
+            ),
+        }
+        return
+    if not checkpoint_path.exists():
+        raise RuntimeError(f"Trained Solver Checkpoint does not exist: {checkpoint_path}")
+
+    tseed = int(time.time() * 1000) % 100000
+    rng = random.Random(tseed)
+    maze_family = rng.choice([MazeFamily.KRUSKAL, MazeFamily.WILSON])
+    maze_seed = rng.randrange(2000, 88000)
+
+    yield from iter_proof_demo_stream_events(
+        ProofDemoConfig(
+            checkpoint_path=checkpoint_path,
+            maze_family=maze_family,
+            maze_seed=maze_seed,
+            sampling_steps=32,
+            retry_count=0,
+            debug_reveal=False,
+            capture_trajectory=False,
+            seed=rng.randrange(0, 1_000_000),
+        )
+    )
+
+_stream_automated_for_http = stream_automated_demo_events
+
+
+def _sse_encode(event: dict) -> str:
+    return f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+
+
+def _stream_sse_events() -> Iterator[str]:
+    try:
+        for event in _stream_automated_for_http():
+            yield _sse_encode(event)
+    except Exception as error:
+        yield _sse_encode({"type": "error", "message": str(error)})
+
 app = FastAPI(title="Dreamaze Proof Demo")
 app.mount("/static", StaticFiles(directory=_SPACE_ROOT / "static"), name="static")
 
@@ -133,3 +188,8 @@ def healthz() -> dict[str, str]:
 @app.post("/solve_new_maze")
 def solve_new_maze() -> dict[str, str]:
     return {"html": _run_automated_for_http()}
+
+
+@app.get("/solve_new_maze_stream")
+def solve_new_maze_stream() -> StreamingResponse:
+    return StreamingResponse(_stream_sse_events(), media_type="text/event-stream")

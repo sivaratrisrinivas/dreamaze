@@ -3,7 +3,7 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from dreamaze.dataset import (
     DatasetSplitName,
@@ -249,6 +249,23 @@ def sample_conditional_diffusion_solution_mask_trajectory(
     sampling_steps: int,
     seed: int,
 ) -> list[tuple[tuple[bool, ...], ...]]:
+    return list(
+        iter_conditional_diffusion_solution_mask_trajectory(
+            example=example,
+            solver=solver,
+            sampling_steps=sampling_steps,
+            seed=seed,
+        )
+    )
+
+
+def iter_conditional_diffusion_solution_mask_trajectory(
+    *,
+    example: ConditionalDiffusionSamplingExample,
+    solver: _LoadedDiffusersSolver,
+    sampling_steps: int,
+    seed: int,
+) -> Iterator[tuple[tuple[bool, ...], ...]]:
     if sampling_steps < 1:
         raise ValueError("Conditional Diffusion Solver sampling steps must be positive")
 
@@ -273,7 +290,7 @@ def sample_conditional_diffusion_solution_mask_trajectory(
         dtype=solver.dtype,
     ).to(solver.device)
 
-    frames = [_tensor_to_mask(noisy_mask, original_rows, original_columns)]
+    yield _tensor_to_mask(noisy_mask, original_rows, original_columns)
     solver.scheduler.set_timesteps(sampling_steps, device=solver.device)
 
     with torch.no_grad():
@@ -286,9 +303,7 @@ def sample_conditional_diffusion_solution_mask_trajectory(
                 noisy_mask,
                 generator=generator,
             ).prev_sample
-            frames.append(_tensor_to_mask(noisy_mask, original_rows, original_columns))
-
-    return frames
+            yield _tensor_to_mask(noisy_mask, original_rows, original_columns)
 
 
 def load_evaluation_config(path: str | Path) -> EvaluationConfig:
