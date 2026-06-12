@@ -26,6 +26,22 @@ def run_evaluation_cli(argv: Sequence[str] | None = None) -> int:
         "Valid-Solution Rate: "
         f"{result.single_sample_success.valid_solution_rate:.6f}"
     )
+    print(
+        "Start Cell inclusion: "
+        f"{result.endpoint_inclusion['start_cell_inclusion_rate']:.6f}"
+    )
+    print(
+        "Goal Cell inclusion: "
+        f"{result.endpoint_inclusion['goal_cell_inclusion_rate']:.6f}"
+    )
+    print(
+        "Both endpoints inclusion: "
+        f"{result.endpoint_inclusion['both_endpoints_inclusion_rate']:.6f}"
+    )
+    print(
+        "Mask overlap excluding endpoints: "
+        f"{result.endpoint_inclusion['mask_overlap_excluding_endpoints']:.6f}"
+    )
     if result.retry_success is not None:
         print(
             "Retry Success: "

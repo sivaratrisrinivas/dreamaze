@@ -11,6 +11,9 @@ from dreamaze.evaluation import (
     EvaluationConfig,
     evaluate_conditional_diffusion_solver,
     load_evaluation_config,
+    _endpoint_inclusion_payload,
+    _mask_includes_cell,
+    _mask_overlap_excluding_cells,
 )
 from dreamaze.evaluation_cli import run_evaluation_cli
 from dreamaze.training import TrainingConfig, train_conditional_diffusion_solver
@@ -75,6 +78,18 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     )
     assert result.retry_success.excluded_from_official_score is True
     assert 0.0 <= result.mask_overlap <= 1.0
+    assert 0.0 <= result.endpoint_inclusion["start_cell_inclusion_rate"] <= 1.0
+    assert 0.0 <= result.endpoint_inclusion["goal_cell_inclusion_rate"] <= 1.0
+    assert (
+        0.0
+        <= result.endpoint_inclusion["both_endpoints_inclusion_rate"]
+        <= 1.0
+    )
+    assert (
+        0.0
+        <= result.endpoint_inclusion["mask_overlap_excluding_endpoints"]
+        <= 1.0
+    )
     assert result.sampled_tensor_stats["total_cells"] == 162
     assert result.sampled_tensor_stats["raw_min"] <= result.sampled_tensor_stats["raw_max"]
     assert (
@@ -93,6 +108,7 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     assert report["sampling"]["retry_count"] == 1
     assert report["sampling"]["seed"] == 11
     assert report["official_score"] == "single_sample_success"
+    assert "endpoint_inclusion" in report
     assert "sampled_tensor_stats" in report
     assert "raw_mean" in report["sampled_tensor_stats"]
     assert report["retry_success"]["excluded_from_official_score"] is True
@@ -158,10 +174,67 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     assert report["checkpoint"]["path"] == str(training_result.checkpoints[-1])
     assert report["official_score"] == "single_sample_success"
     assert "failure_reason_counts" in report
+    assert "endpoint_inclusion" in report
     assert "sampled_tensor_stats" in report
     cli_output = capsys.readouterr().out
     assert "Conditional Diffusion Solver evaluation complete" in cli_output
     assert "Official score: Single-Sample Success" in cli_output
+    assert "Start Cell inclusion:" in cli_output
+    assert "Goal Cell inclusion:" in cli_output
+    assert "Both endpoints inclusion:" in cli_output
+    assert "Mask overlap excluding endpoints:" in cli_output
+
+
+def test_endpoint_inclusion_payload_reports_separate_endpoint_rates():
+    payload = _endpoint_inclusion_payload(
+        evaluated_examples=4,
+        start_cell_included_count=3,
+        goal_cell_included_count=2,
+        both_endpoints_included_count=1,
+        body_mask_overlaps=[0.25, 0.75],
+    )
+
+    assert payload == {
+        "start_cell_included_count": 3,
+        "goal_cell_included_count": 2,
+        "both_endpoints_included_count": 1,
+        "start_cell_inclusion_rate": 0.75,
+        "goal_cell_inclusion_rate": 0.5,
+        "both_endpoints_inclusion_rate": 0.25,
+        "mask_overlap_excluding_endpoints": 0.5,
+    }
+
+
+def test_mask_overlap_excluding_cells_reports_body_overlap_without_endpoints():
+    proposed_mask = (
+        (True, True, False),
+        (False, True, False),
+        (False, False, True),
+    )
+    label_mask = (
+        (1, 1, 0),
+        (0, 0, 0),
+        (0, 1, 1),
+    )
+
+    assert _mask_overlap_excluding_cells(
+        proposed_mask=proposed_mask,
+        label_mask=label_mask,
+        excluded_cells={(0, 0), (2, 2)},
+    ) == pytest.approx(1 / 3)
+
+
+def test_mask_includes_cell_rejects_unmarked_or_out_of_bounds_cells():
+    mask = (
+        (False, True),
+        (False, False),
+    )
+
+    assert _mask_includes_cell(mask, (0, 1)) is True
+    assert _mask_includes_cell(mask, (1, 1)) is False
+    assert _mask_includes_cell(mask, (-1, 0)) is False
+    assert _mask_includes_cell(mask, (2, 0)) is False
+    assert _mask_includes_cell(mask, (0, 2)) is False
 
 
 def _requires_diffusers_runtime() -> None:

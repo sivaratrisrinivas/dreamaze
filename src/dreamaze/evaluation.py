@@ -67,6 +67,7 @@ class EvaluationResult:
     single_sample_success: EvaluationMetric
     retry_success: EvaluationMetric | None
     mask_overlap: float
+    endpoint_inclusion: Mapping[str, float | int]
     sampled_tensor_stats: Mapping[str, float | int]
     failure_reason_counts: Mapping[str, int]
 
@@ -90,6 +91,7 @@ class EvaluationResult:
             "official_score": "single_sample_success",
             "single_sample_success": self.single_sample_success.to_payload(),
             "mask_overlap": self.mask_overlap,
+            "endpoint_inclusion": dict(self.endpoint_inclusion),
             "sampled_tensor_stats": dict(self.sampled_tensor_stats),
             "failure_reason_counts": dict(self.failure_reason_counts),
         }
@@ -158,6 +160,10 @@ def evaluate_conditional_diffusion_solver(
     retry_valid_count = 0
     failure_reasons: Counter[str] = Counter()
     mask_overlaps: list[float] = []
+    body_mask_overlaps: list[float] = []
+    start_cell_included_count = 0
+    goal_cell_included_count = 0
+    both_endpoints_included_count = 0
     sampled_tensor_stats: list[SampledTensorStats] = []
 
     for index, example in enumerate(examples):
@@ -177,6 +183,23 @@ def evaluate_conditional_diffusion_solver(
         )
         mask_overlaps.append(
             _mask_overlap(proposed_mask=first_mask, label_mask=example.solution_mask)
+        )
+        rendered_start_cell = _rendered_cell(example.start_cell)
+        rendered_goal_cell = _rendered_cell(example.goal_cell)
+        start_cell_included = _mask_includes_cell(first_mask, rendered_start_cell)
+        goal_cell_included = _mask_includes_cell(first_mask, rendered_goal_cell)
+        if start_cell_included:
+            start_cell_included_count += 1
+        if goal_cell_included:
+            goal_cell_included_count += 1
+        if start_cell_included and goal_cell_included:
+            both_endpoints_included_count += 1
+        body_mask_overlaps.append(
+            _mask_overlap_excluding_cells(
+                proposed_mask=first_mask,
+                label_mask=example.solution_mask,
+                excluded_cells={rendered_start_cell, rendered_goal_cell},
+            )
         )
 
         if first_result.valid:
@@ -222,6 +245,13 @@ def evaluate_conditional_diffusion_solver(
         single_sample_success=single_sample_success,
         retry_success=retry_success,
         mask_overlap=sum(mask_overlaps) / evaluated_examples,
+        endpoint_inclusion=_endpoint_inclusion_payload(
+            evaluated_examples=evaluated_examples,
+            start_cell_included_count=start_cell_included_count,
+            goal_cell_included_count=goal_cell_included_count,
+            both_endpoints_included_count=both_endpoints_included_count,
+            body_mask_overlaps=body_mask_overlaps,
+        ),
         sampled_tensor_stats=_aggregate_sampled_tensor_stats(sampled_tensor_stats),
         failure_reason_counts=dict(sorted(failure_reasons.items())),
     )
@@ -530,12 +560,73 @@ def _mask_overlap(
     proposed_mask: tuple[tuple[bool, ...], ...],
     label_mask: tuple[tuple[int, ...], ...],
 ) -> float:
+    return _mask_overlap_excluding_cells(
+        proposed_mask=proposed_mask,
+        label_mask=label_mask,
+        excluded_cells=set(),
+    )
+
+
+def _mask_overlap_excluding_cells(
+    *,
+    proposed_mask: tuple[tuple[bool, ...], ...],
+    label_mask: tuple[tuple[int, ...], ...],
+    excluded_cells: set[tuple[int, int]],
+) -> float:
     proposed_cells = _marked_cells(proposed_mask)
     label_cells = _marked_cells(label_mask)
+    proposed_cells -= excluded_cells
+    label_cells -= excluded_cells
     union = proposed_cells | label_cells
     if not union:
         return 1.0
     return len(proposed_cells & label_cells) / len(union)
+
+
+def _mask_includes_cell(
+    mask: tuple[tuple[bool, ...], ...], cell: tuple[int, int]
+) -> bool:
+    row, column = cell
+    if row < 0 or column < 0:
+        return False
+    if row >= len(mask) or column >= len(mask[row]):
+        return False
+    return bool(mask[row][column])
+
+
+def _endpoint_inclusion_payload(
+    *,
+    evaluated_examples: int,
+    start_cell_included_count: int,
+    goal_cell_included_count: int,
+    both_endpoints_included_count: int,
+    body_mask_overlaps: list[float],
+) -> Mapping[str, float | int]:
+    if evaluated_examples == 0:
+        return {
+            "start_cell_included_count": 0,
+            "goal_cell_included_count": 0,
+            "both_endpoints_included_count": 0,
+            "start_cell_inclusion_rate": 0.0,
+            "goal_cell_inclusion_rate": 0.0,
+            "both_endpoints_inclusion_rate": 0.0,
+            "mask_overlap_excluding_endpoints": 0.0,
+        }
+    return {
+        "start_cell_included_count": start_cell_included_count,
+        "goal_cell_included_count": goal_cell_included_count,
+        "both_endpoints_included_count": both_endpoints_included_count,
+        "start_cell_inclusion_rate": start_cell_included_count / evaluated_examples,
+        "goal_cell_inclusion_rate": goal_cell_included_count / evaluated_examples,
+        "both_endpoints_inclusion_rate": (
+            both_endpoints_included_count / evaluated_examples
+        ),
+        "mask_overlap_excluding_endpoints": (
+            sum(body_mask_overlaps) / len(body_mask_overlaps)
+            if body_mask_overlaps
+            else 0.0
+        ),
+    }
 
 
 def _marked_cells(mask: tuple[tuple[bool | int, ...], ...]) -> set[tuple[int, int]]:
