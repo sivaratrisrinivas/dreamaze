@@ -189,12 +189,15 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     cli_output = capsys.readouterr().out
     assert "Conditional Diffusion Solver evaluation complete" in cli_output
     assert "Official score: Single-Sample Success" in cli_output
+    assert "Target Valid-Solution Rate: 0.800000-0.900000" in cli_output
+    assert "Single-Sample Success:" in cli_output
     assert "Start Cell inclusion:" in cli_output
     assert "Goal Cell inclusion:" in cli_output
     assert "Both endpoints inclusion:" in cli_output
     assert "Mask overlap excluding endpoints:" in cli_output
     assert "Start Cell raw value:" in cli_output
     assert "Goal Cell raw value:" in cli_output
+    assert "Failure reasons:" in cli_output
 
 
 def test_endpoint_raw_value_diagnostics_compare_endpoints_to_label_and_background():

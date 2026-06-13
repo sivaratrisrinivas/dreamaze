@@ -12,8 +12,10 @@ from dreamaze.training import DIFFUSERS_MODEL_TYPE
 from dreamaze.training import (
     TrainingConfig,
     TrainingExampleArrays,
+    _loss_weight_channels,
     load_training_config,
     _solution_mask_target_channels,
+    _weighted_mse_loss,
     train_conditional_diffusion_solver,
 )
 from dreamaze.training_cli import run_training_cli
@@ -92,6 +94,8 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
                 "device": "cpu",
                 "precision": "float32",
                 "num_workers": 0,
+                "positive_loss_weight": 8.0,
+                "endpoint_loss_weight": 32.0,
             }
         )
     )
@@ -110,6 +114,8 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
     assert config.device == "cpu"
     assert config.precision == "float32"
     assert config.num_workers == 0
+    assert config.positive_loss_weight == 8.0
+    assert config.endpoint_loss_weight == 32.0
 
 
 def test_training_encodes_solution_mask_targets_symmetrically():
@@ -126,6 +132,47 @@ def test_training_encodes_solution_mask_targets_symmetrically():
             [1.0, -1.0],
         ]
     ]
+
+
+def test_training_weights_sparse_path_and_endpoints():
+    example = TrainingExampleArrays(
+        maze_condition=tuple(tuple(1 for _ in range(5)) for _ in range(5)),
+        solution_mask=(
+            (0, 0, 0, 0, 0),
+            (0, 1, 1, 1, 0),
+            (0, 0, 0, 1, 0),
+            (0, 0, 0, 1, 0),
+            (0, 0, 0, 0, 0),
+        ),
+        start_cell=(0, 0),
+        goal_cell=(1, 1),
+    )
+
+    assert _loss_weight_channels(
+        example,
+        positive_loss_weight=8.0,
+        endpoint_loss_weight=32.0,
+    ) == [
+        [
+            [1.0, 1.0, 1.0, 1.0, 1.0],
+            [1.0, 32.0, 8.0, 8.0, 1.0],
+            [1.0, 1.0, 1.0, 8.0, 1.0],
+            [1.0, 1.0, 1.0, 32.0, 1.0],
+            [1.0, 1.0, 1.0, 1.0, 1.0],
+        ]
+    ]
+
+
+def test_weighted_training_loss_is_normalized_by_total_weight():
+    torch = pytest.importorskip("torch", exc_type=ImportError)
+
+    loss = _weighted_mse_loss(
+        predicted=torch.tensor([[[[2.0, 3.0]]]]),
+        target=torch.tensor([[[[0.0, 1.0]]]]),
+        weights=torch.tensor([[[[1.0, 3.0]]]]),
+    )
+
+    assert loss.item() == pytest.approx(4.0)
 
 
 def test_training_config_controls_checkpoint_cadence(tmp_path):

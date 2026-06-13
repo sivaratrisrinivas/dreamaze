@@ -26,6 +26,12 @@ def run_evaluation_cli(argv: Sequence[str] | None = None) -> int:
         "Valid-Solution Rate: "
         f"{result.single_sample_success.valid_solution_rate:.6f}"
     )
+    print("Target Valid-Solution Rate: 0.800000-0.900000")
+    print(
+        "Single-Sample Success: "
+        f"{result.single_sample_success.valid_count}/"
+        f"{result.single_sample_success.evaluated_examples}"
+    )
     print(
         "Start Cell inclusion: "
         f"{result.endpoint_inclusion['start_cell_inclusion_rate']:.6f}"
@@ -56,6 +62,7 @@ def run_evaluation_cli(argv: Sequence[str] | None = None) -> int:
             f"{result.retry_success.valid_solution_rate:.6f} "
             "(excluded from official score)"
         )
+    print(f"Failure reasons: {dict(result.failure_reason_counts)}")
     if config.report_path is not None:
         print(f"Report written: {config.report_path}")
     return 0

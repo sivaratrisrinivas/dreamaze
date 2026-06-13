@@ -17,7 +17,7 @@ from dreamaze.dataset_cli import (
     larger_dataset_config,
     tiny_dataset_config,
 )
-from dreamaze.dataset import write_dataset_artifacts
+from dreamaze.dataset import MazeFamily, write_dataset_artifacts
 from dreamaze.evaluation import EvaluationConfig, evaluate_conditional_diffusion_solver
 from dreamaze.training import TrainingConfig, train_conditional_diffusion_solver
 
@@ -34,6 +34,11 @@ def main() -> int:
 
     if args.dataset_preset is not None:
         dataset_config = _dataset_config_for_preset(args.dataset_preset)
+        if args.maze_family is not None:
+            dataset_config = _single_family_dataset_config(
+                dataset_config=dataset_config,
+                maze_family=MazeFamily(args.maze_family),
+            )
         manifest = write_dataset_artifacts(
             config=dataset_config,
             output_dir=dataset_dir,
@@ -43,6 +48,10 @@ def main() -> int:
             f"train={manifest.split_counts['train']} "
             f"validation={manifest.split_counts['validation']} "
             f"test={manifest.split_counts['test']}"
+        )
+        print(
+            "Dataset Maze Families: "
+            + ", ".join(maze_family.value for maze_family in dataset_config.maze_families)
         )
 
     training_config = TrainingConfig(
@@ -58,6 +67,8 @@ def main() -> int:
         device=args.device,
         precision=args.precision,
         num_workers=args.num_workers,
+        positive_loss_weight=args.positive_loss_weight,
+        endpoint_loss_weight=args.endpoint_loss_weight,
     )
     training_result = train_conditional_diffusion_solver(training_config)
     latest_checkpoint = training_result.checkpoints[-1]
@@ -81,6 +92,19 @@ def main() -> int:
     print(
         "Valid-Solution Rate: "
         f"{evaluation_result.single_sample_success.valid_solution_rate:.6f}"
+    )
+    print(
+        "Single-Sample Success: "
+        f"{evaluation_result.single_sample_success.valid_count}/"
+        f"{evaluation_result.single_sample_success.evaluated_examples}"
+    )
+    print("Target Valid-Solution Rate: 0.800000-0.900000")
+    print(f"Failure reasons: {dict(evaluation_result.failure_reason_counts)}")
+    print(
+        "Endpoint inclusion: "
+        f"start={evaluation_result.endpoint_inclusion['start_cell_inclusion_rate']:.6f} "
+        f"goal={evaluation_result.endpoint_inclusion['goal_cell_inclusion_rate']:.6f} "
+        f"both={evaluation_result.endpoint_inclusion['both_endpoints_inclusion_rate']:.6f}"
     )
 
     _write_run_summary(
@@ -121,6 +145,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-train-steps", type=int, required=True)
     parser.add_argument("--checkpoint-every-steps", type=int, required=True)
     parser.add_argument("--learning-rate", type=float, required=True)
+    parser.add_argument("--positive-loss-weight", type=float, default=1.0)
+    parser.add_argument("--endpoint-loss-weight", type=float, default=1.0)
     parser.add_argument("--training-seed", type=int, required=True)
     parser.add_argument("--evaluation-seed", type=int, required=True)
     parser.add_argument("--retry-count", type=int, required=True)
@@ -128,6 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", required=True)
     parser.add_argument("--precision", required=True)
     parser.add_argument("--num-workers", type=int, required=True)
+    parser.add_argument("--maze-family", choices=("kruskal", "wilson"))
     parser.add_argument("--output-repo")
     parser.add_argument("--output-repo-type", default="dataset")
     parser.add_argument("--output-path-in-repo", default="dreamaze-runs/latest")
@@ -149,6 +176,22 @@ def _dataset_config_for_preset(preset: str):
     raise ValueError(f"Unknown Dataset Builder preset: {preset}")
 
 
+def _single_family_dataset_config(*, dataset_config, maze_family: MazeFamily):
+    return type(dataset_config)(
+        width=dataset_config.width,
+        height=dataset_config.height,
+        maze_families=(maze_family,),
+        split_sizes=dataset_config.split_sizes,
+        seed_ranges=dataset_config.seed_ranges,
+        border_endpoint_pair_rule=dataset_config.border_endpoint_pair_rule,
+        minimum_path_length=dataset_config.minimum_path_length,
+        output_format=dataset_config.output_format,
+        shard_size=dataset_config.shard_size,
+        write_preview_images=dataset_config.write_preview_images,
+        max_rejections_per_split=dataset_config.max_rejections_per_split,
+    )
+
+
 def _write_run_summary(
     *,
     run_dir: Path,
@@ -166,9 +209,12 @@ def _write_run_summary(
         "sampling_steps": args.sampling_steps,
         "max_train_steps": args.max_train_steps,
         "checkpoint_every_steps": args.checkpoint_every_steps,
+        "positive_loss_weight": args.positive_loss_weight,
+        "endpoint_loss_weight": args.endpoint_loss_weight,
         "eval_split": args.eval_split,
         "device": args.device,
         "precision": args.precision,
+        "maze_family": args.maze_family,
     }
     (run_dir / "hf-job-summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n"

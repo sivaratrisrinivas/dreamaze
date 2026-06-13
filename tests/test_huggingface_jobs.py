@@ -32,6 +32,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
                 "max_train_steps": 7,
                 "checkpoint_every_steps": 2,
                 "learning_rate": 0.025,
+                "positive_loss_weight": 8.0,
+                "endpoint_loss_weight": 32.0,
                 "training_seed": 123,
                 "evaluation_seed": 456,
                 "retry_count": 3,
@@ -44,6 +46,7 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
                 "output_path_in_repo": "runs/smoke",
                 "model_output_repo": "Srini410/dreamaze-solver",
                 "model_output_path_in_repo": "checkpoints/smoke",
+                "maze_family": "kruskal",
                 "env": {"HF_XET_HIGH_PERFORMANCE": "1"},
             }
         )
@@ -67,6 +70,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
         max_train_steps=7,
         checkpoint_every_steps=2,
         learning_rate=0.025,
+        positive_loss_weight=8.0,
+        endpoint_loss_weight=32.0,
         training_seed=123,
         evaluation_seed=456,
         retry_count=3,
@@ -79,6 +84,7 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
         output_path_in_repo="runs/smoke",
         model_output_repo="Srini410/dreamaze-solver",
         model_output_path_in_repo="checkpoints/smoke",
+        maze_family="kruskal",
         env={"HF_XET_HIGH_PERFORMANCE": "1"},
     )
     assert command[:4] == ["hf", "jobs", "uv", "run"]
@@ -96,6 +102,12 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
     assert "6" in command
     assert "--checkpoint-every-steps" in command
     assert "2" in command
+    assert "--positive-loss-weight" in command
+    assert "8.0" in command
+    assert "--endpoint-loss-weight" in command
+    assert "32.0" in command
+    assert "--maze-family" in command
+    assert "kruskal" in command
     assert "--output-repo" in command
     assert "Srini410/dreamaze-artifacts" in command
     assert "--model-output-repo" in command
@@ -221,6 +233,10 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
             "1",
             "--learning-rate",
             "0.01",
+            "--positive-loss-weight",
+            "8.0",
+            "--endpoint-loss-weight",
+            "32.0",
             "--training-seed",
             "7",
             "--evaluation-seed",
@@ -235,6 +251,8 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
             "float32",
             "--num-workers",
             "0",
+            "--maze-family",
+            "kruskal",
         ],
     )
 
@@ -246,6 +264,10 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
     report = json.loads(evaluation_output.read_text())
     assert report["dataset_split"] == "validation"
     assert report["official_score"] == "single_sample_success"
+    summary = json.loads((tmp_path / "hf-job-summary.json").read_text())
+    assert summary["maze_family"] == "kruskal"
+    assert summary["positive_loss_weight"] == 8.0
+    assert summary["endpoint_loss_weight"] == 32.0
 
 
 def _requires_diffusers_runtime() -> None:

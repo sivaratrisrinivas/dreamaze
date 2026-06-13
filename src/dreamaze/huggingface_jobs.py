@@ -22,6 +22,8 @@ _DEFAULTS = {
     "max_train_steps": 1,
     "checkpoint_every_steps": 1,
     "learning_rate": 0.01,
+    "positive_loss_weight": 1.0,
+    "endpoint_loss_weight": 1.0,
     "training_seed": 0,
     "evaluation_seed": 0,
     "retry_count": 0,
@@ -86,6 +88,8 @@ class HuggingFaceJobConfig:
     max_train_steps: int = 1
     checkpoint_every_steps: int = 1
     learning_rate: float = 0.01
+    positive_loss_weight: float = 1.0
+    endpoint_loss_weight: float = 1.0
     training_seed: int = 0
     evaluation_seed: int = 0
     retry_count: int = 0
@@ -98,6 +102,7 @@ class HuggingFaceJobConfig:
     output_path_in_repo: str = "dreamaze-runs/latest"
     model_output_repo: str | None = None
     model_output_path_in_repo: str = "checkpoints/latest"
+    maze_family: str | None = None
     env: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -125,6 +130,12 @@ def load_huggingface_job_config(path: str | Path) -> HuggingFaceJobConfig:
             "checkpoint_every_steps", _DEFAULTS["checkpoint_every_steps"]
         ),
         learning_rate=payload.get("learning_rate", _DEFAULTS["learning_rate"]),
+        positive_loss_weight=payload.get(
+            "positive_loss_weight", _DEFAULTS["positive_loss_weight"]
+        ),
+        endpoint_loss_weight=payload.get(
+            "endpoint_loss_weight", _DEFAULTS["endpoint_loss_weight"]
+        ),
         training_seed=payload.get("training_seed", _DEFAULTS["training_seed"]),
         evaluation_seed=payload.get("evaluation_seed", _DEFAULTS["evaluation_seed"]),
         retry_count=payload.get("retry_count", _DEFAULTS["retry_count"]),
@@ -143,6 +154,7 @@ def load_huggingface_job_config(path: str | Path) -> HuggingFaceJobConfig:
         model_output_path_in_repo=payload.get(
             "model_output_path_in_repo", "checkpoints/latest"
         ),
+        maze_family=payload.get("maze_family"),
         env=payload.get("env", _DEFAULTS["env"]),
     )
     _validate_huggingface_job_config(config)
@@ -216,6 +228,10 @@ def _remote_script_args(config: HuggingFaceJobConfig) -> list[str]:
         str(config.checkpoint_every_steps),
         "--learning-rate",
         str(config.learning_rate),
+        "--positive-loss-weight",
+        str(config.positive_loss_weight),
+        "--endpoint-loss-weight",
+        str(config.endpoint_loss_weight),
         "--training-seed",
         str(config.training_seed),
         "--evaluation-seed",
@@ -233,6 +249,8 @@ def _remote_script_args(config: HuggingFaceJobConfig) -> list[str]:
     ]
     if config.dataset_preset is not None:
         args.extend(["--dataset-preset", config.dataset_preset])
+    if config.maze_family is not None:
+        args.extend(["--maze-family", config.maze_family])
     if config.output_repo is not None:
         args.extend(
             [
@@ -273,6 +291,12 @@ def _validate_huggingface_job_config(config: HuggingFaceJobConfig) -> None:
         raise ValueError("Hugging Face job checkpoint cadence must be positive")
     if config.learning_rate <= 0:
         raise ValueError("Hugging Face job learning rate must be positive")
+    if config.positive_loss_weight <= 0:
+        raise ValueError("Hugging Face job positive loss weight must be positive")
+    if config.endpoint_loss_weight <= 0:
+        raise ValueError("Hugging Face job endpoint loss weight must be positive")
+    if config.maze_family not in {None, "kruskal", "wilson"}:
+        raise ValueError("Hugging Face job maze family must be kruskal or wilson")
     if config.retry_count < 0:
         raise ValueError("Hugging Face job retry count cannot be negative")
     if config.num_workers < 0:
