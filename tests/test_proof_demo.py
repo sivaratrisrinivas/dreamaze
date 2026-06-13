@@ -214,6 +214,22 @@ def test_space_app_serves_html_css_js_ui(monkeypatch, tmp_path):
     assert Path(index.path) == static_dir / "index.html"
     assert (static_dir / "styles.css").exists()
     assert (static_dir / "app.js").exists()
+    assert (static_dir / "favicon.svg").exists()
+    assert 'href="/static/favicon.svg"' in (static_dir / "index.html").read_text()
+
+
+def test_space_app_serves_root_favicon(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    module = _load_space_app("dreamaze_space_favicon")
+
+    favicon = module.favicon()
+
+    assert Path(favicon.path) == _SPACE_APP_PATH.parent / "static" / "favicon.svg"
+    assert favicon.media_type == "image/svg+xml"
+    favicon_route = next(route for route in module.app.routes if route.path == "/favicon.ico")
+    assert {"GET", "HEAD"} <= favicon_route.methods
 
 
 def test_space_app_solve_endpoint_returns_visualization_html(monkeypatch, tmp_path):

@@ -229,6 +229,14 @@ def index() -> FileResponse:
     return FileResponse(_SPACE_ROOT / "static" / "index.html")
 
 
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(
+        _SPACE_ROOT / "static" / "favicon.svg",
+        media_type="image/svg+xml",
+    )
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}

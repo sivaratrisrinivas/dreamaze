@@ -107,3 +107,11 @@ After clicking `Solve New Maze`, the Space logs should include a line like:
 ```text
 Dreamaze solver runtime: device=cuda precision=float16 cuda_device=Tesla T4
 ```
+
+Browser console verification should not show a missing favicon error. The
+Docker Space serves the same SVG asset from both `/static/favicon.svg` and the
+browser-default `/favicon.ico` path, including `GET` and `HEAD` requests:
+
+```bash
+curl -I https://srini410-dreamaze-proof-demo.hf.space/favicon.ico
+```
