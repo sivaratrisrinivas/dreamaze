@@ -21,7 +21,11 @@ from dreamaze.training import (
     _torch_dtype,
     load_checkpoint_metadata,
 )
-from dreamaze.validation import validate_solution_mask
+from dreamaze.validation import (
+    MaskStructureDiagnostics,
+    compute_mask_structure_diagnostics,
+    validate_solution_mask,
+)
 
 _THRESHOLD_CALIBRATION_CANDIDATES = (-0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75)
 
@@ -75,6 +79,7 @@ class EvaluationResult:
     endpoint_raw_value_examples: tuple[Mapping[str, Any], ...]
     failure_reason_counts: Mapping[str, int]
     threshold_calibration: tuple[Mapping[str, Any], ...]
+    structure_stats: Mapping[str, float | int]
 
     def to_json(self) -> str:
         return json.dumps(self.to_payload(), indent=2, sort_keys=True) + "\n"
@@ -106,6 +111,7 @@ class EvaluationResult:
             "threshold_calibration": [
                 dict(item) for item in self.threshold_calibration
             ],
+            "structure_stats": dict(self.structure_stats),
         }
         if self.retry_success is not None:
             payload["retry_success"] = self.retry_success.to_payload()
@@ -197,6 +203,7 @@ def evaluate_conditional_diffusion_solver(
     endpoint_raw_value_diagnostics: list[EndpointRawValueDiagnostics] = []
     endpoint_raw_value_examples: list[Mapping[str, Any]] = []
     threshold_calibration_examples: list[tuple[TrainingExampleArrays, SampledSolutionMask]] = []
+    structure_diagnostics_list: list[MaskStructureDiagnostics] = []
 
     for index, example in enumerate(examples):
         first_sample = sample_conditional_diffusion_solution_mask_with_stats(
@@ -234,6 +241,15 @@ def evaluate_conditional_diffusion_solver(
             goal_cell_included_count += 1
         if start_cell_included and goal_cell_included:
             both_endpoints_included_count += 1
+
+        structure = compute_mask_structure_diagnostics(
+            grid_maze=_bool_grid(example.maze_condition),
+            solution_mask=first_mask,
+            start_cell=rendered_start_cell,
+            goal_cell=rendered_goal_cell,
+        )
+        structure_diagnostics_list.append(structure)
+
         endpoint_raw_value_examples.append(
             _endpoint_raw_value_example_payload(
                 example_index=index,
@@ -247,6 +263,7 @@ def evaluate_conditional_diffusion_solver(
                 tensor_stats_fraction_at_or_above_threshold=(
                     first_sample.tensor_stats.fraction_at_or_above_threshold
                 ),
+                structure=structure,
             )
         )
         body_mask_overlaps.append(
@@ -316,6 +333,7 @@ def evaluate_conditional_diffusion_solver(
         threshold_calibration=_threshold_calibration_payloads(
             threshold_calibration_examples
         ),
+        structure_stats=_aggregate_structure_diagnostics(structure_diagnostics_list),
     )
 
 
@@ -723,6 +741,55 @@ def _aggregate_endpoint_raw_value_diagnostics(
     }
 
 
+def _aggregate_structure_diagnostics(
+    diags: list[MaskStructureDiagnostics],
+) -> Mapping[str, float | int]:
+    if not diags:
+        return {
+            "marked_count_mean": 0.0,
+            "wall_crossing_count_mean": 0.0,
+            "connected_component_mean": 0.0,
+            "extra_branch_violation_mean": 0.0,
+            "start_included_rate": 0.0,
+            "goal_included_rate": 0.0,
+            "endpoints_in_same_component_rate": 0.0,
+            "degree_0_count": 0,
+            "degree_1_count": 0,
+            "degree_2_count": 0,
+            "degree_3plus_count": 0,
+        }
+    n = len(diags)
+    marked_mean = _mean([d.marked_count for d in diags])
+    wall_mean = _mean([d.wall_crossing_count for d in diags])
+    comp_mean = _mean([d.connected_component_count for d in diags])
+    branch_mean = _mean([d.extra_branch_violation_count for d in diags])
+    start_rate = sum(1 for d in diags if d.start_included) / n
+    goal_rate = sum(1 for d in diags if d.goal_included) / n
+    same_comp_rate = sum(1 for d in diags if d.endpoints_in_same_component) / n
+
+    # aggregate simple degree buckets across all samples
+    deg0 = sum(d.degree_histogram.get(0, 0) for d in diags)
+    deg1 = sum(d.degree_histogram.get(1, 0) for d in diags)
+    deg2 = sum(d.degree_histogram.get(2, 0) for d in diags)
+    deg3plus = sum(
+        sum(c for deg, c in d.degree_histogram.items() if deg >= 3) for d in diags
+    )
+
+    return {
+        "marked_count_mean": marked_mean,
+        "wall_crossing_count_mean": wall_mean,
+        "connected_component_mean": comp_mean,
+        "extra_branch_violation_mean": branch_mean,
+        "start_included_rate": start_rate,
+        "goal_included_rate": goal_rate,
+        "endpoints_in_same_component_rate": same_comp_rate,
+        "degree_0_count": deg0,
+        "degree_1_count": deg1,
+        "degree_2_count": deg2,
+        "degree_3plus_count": deg3plus,
+    }
+
+
 def _endpoint_raw_value_example_payload(
     *,
     example_index: int,
@@ -732,8 +799,9 @@ def _endpoint_raw_value_example_payload(
     diagnostics: EndpointRawValueDiagnostics,
     tensor_stats_marked_count: int,
     tensor_stats_fraction_at_or_above_threshold: float,
+    structure: MaskStructureDiagnostics | None = None,
 ) -> Mapping[str, float | int | bool | str | None]:
-    return {
+    payload: dict[str, Any] = {
         "example_index": example_index,
         "validation_failure_reason": validation_failure_reason,
         "start_cell_included": start_cell_included,
@@ -751,6 +819,18 @@ def _endpoint_raw_value_example_payload(
             tensor_stats_fraction_at_or_above_threshold
         ),
     }
+    if structure is not None:
+        payload["structure"] = {
+            "marked_count": structure.marked_count,
+            "wall_crossing_count": structure.wall_crossing_count,
+            "connected_component_count": structure.connected_component_count,
+            "start_included": structure.start_included,
+            "goal_included": structure.goal_included,
+            "endpoints_in_same_component": structure.endpoints_in_same_component,
+            "degree_histogram": dict(structure.degree_histogram),
+            "extra_branch_violation_count": structure.extra_branch_violation_count,
+        }
+    return payload
 
 
 def _raw_value_at_cell(
@@ -798,6 +878,7 @@ def _threshold_calibration_payload(
     start_cell_included_count = 0
     goal_cell_included_count = 0
     both_endpoints_included_count = 0
+    structure_list: list[MaskStructureDiagnostics] = []
 
     for example, sample in examples:
         mask = _mask_from_raw_values(sample.raw_values, threshold)
@@ -826,12 +907,24 @@ def _threshold_calibration_payload(
         if start_cell_included and goal_cell_included:
             both_endpoints_included_count += 1
 
+        structure = compute_mask_structure_diagnostics(
+            grid_maze=_bool_grid(example.maze_condition),
+            solution_mask=mask,
+            start_cell=rendered_start_cell,
+            goal_cell=rendered_goal_cell,
+        )
+        structure_list.append(structure)
+
     evaluated_examples = len(examples)
     total_cells = sum(
         len(sample.raw_values) * len(sample.raw_values[0])
         for _, sample in examples
     )
     marked_count = sum(marked_counts)
+
+    # structure aggregates for this thresholded view of samples
+    struc = _aggregate_structure_diagnostics(structure_list)
+
     return {
         "threshold": threshold,
         "valid_count": valid_count,
@@ -859,6 +952,12 @@ def _threshold_calibration_payload(
             both_endpoints_included_count / evaluated_examples
             if evaluated_examples
             else 0.0
+        ),
+        "connected_component_mean": struc.get("connected_component_mean", 0.0),
+        "wall_crossing_count_mean": struc.get("wall_crossing_count_mean", 0.0),
+        "extra_branch_violation_mean": struc.get("extra_branch_violation_mean", 0.0),
+        "endpoints_in_same_component_rate": struc.get(
+            "endpoints_in_same_component_rate", 0.0
         ),
     }
 

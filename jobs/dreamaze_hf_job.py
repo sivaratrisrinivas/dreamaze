@@ -108,6 +108,14 @@ def main() -> int:
         f"goal={evaluation_result.endpoint_inclusion['goal_cell_inclusion_rate']:.6f} "
         f"both={evaluation_result.endpoint_inclusion['both_endpoints_inclusion_rate']:.6f}"
     )
+    structure = evaluation_result.structure_stats
+    print(
+        "Structure diagnostics (primary): "
+        f"components_mean={structure.get('connected_component_mean', 0):.3f} "
+        f"wall_crossings_mean={structure.get('wall_crossing_count_mean', 0):.3f} "
+        f"branch_violations_mean={structure.get('extra_branch_violation_mean', 0):.3f} "
+        f"same_comp_rate={structure.get('endpoints_in_same_component_rate', 0):.3f}"
+    )
     best_threshold = max(
         evaluation_result.threshold_calibration,
         key=lambda item: (
@@ -121,6 +129,13 @@ def main() -> int:
         f"threshold={best_threshold['threshold']:.2f} "
         f"valid_solution_rate={best_threshold['valid_solution_rate']:.6f} "
         f"both_endpoints={best_threshold['both_endpoints_inclusion_rate']:.6f}"
+    )
+    print(
+        "  best-thresh structure: "
+        f"components_mean={best_threshold.get('connected_component_mean', 0):.3f} "
+        f"wall_crossings_mean={best_threshold.get('wall_crossing_count_mean', 0):.3f} "
+        f"branch_viol_mean={best_threshold.get('extra_branch_violation_mean', 0):.3f} "
+        f"same_comp_rate={best_threshold.get('endpoints_in_same_component_rate', 0):.3f}"
     )
 
     _write_run_summary(

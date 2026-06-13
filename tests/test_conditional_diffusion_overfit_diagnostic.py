@@ -75,6 +75,9 @@ def test_tiny_overfit_diagnostic_generates_non_empty_mask_with_overlap(tmp_path)
     assert result.sampled_tensor_stats["marked_count_mean"] > 0.0
     assert result.sampled_tensor_stats["fraction_at_or_above_threshold"] > 0.0
     assert result.mask_overlap > 0.0
+    assert "connected_component_mean" in result.structure_stats
+    assert "wall_crossing_count_mean" in result.structure_stats
+    assert result.structure_stats["marked_count_mean"] >= 0
 
 
 def _requires_diffusers_runtime() -> None:

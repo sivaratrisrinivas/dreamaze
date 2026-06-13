@@ -36,8 +36,10 @@ from dreamaze.training import (
     train_conditional_diffusion_solver,
 )
 from dreamaze.validation import (
+    MaskStructureDiagnostics,
     SolutionValidationResult,
     ValidationReason,
+    compute_mask_structure_diagnostics,
     validate_solution_mask,
 )
 
@@ -55,6 +57,7 @@ __all__ = [
     "EvaluationConfig",
     "EvaluationMetric",
     "EvaluationResult",
+    "MaskStructureDiagnostics",
     "MazeCondition",
     "MazeFamily",
     "SolutionValidationResult",
@@ -74,4 +77,5 @@ __all__ = [
     "sample_conditional_diffusion_solution_mask_trajectory",
     "train_conditional_diffusion_solver",
     "validate_solution_mask",
+    "compute_mask_structure_diagnostics",
 ]

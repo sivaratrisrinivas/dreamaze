@@ -77,6 +77,14 @@ def run_evaluation_cli(argv: Sequence[str] | None = None) -> int:
             "(excluded from official score)"
         )
     print(f"Failure reasons: {dict(result.failure_reason_counts)}")
+    structure = result.structure_stats
+    print(
+        "Structure diagnostics (primary): "
+        f"components_mean={structure.get('connected_component_mean', 0):.3f} "
+        f"wall_crossings_mean={structure.get('wall_crossing_count_mean', 0):.3f} "
+        f"branch_violations_mean={structure.get('extra_branch_violation_mean', 0):.3f} "
+        f"same_comp_rate={structure.get('endpoints_in_same_component_rate', 0):.3f}"
+    )
     if config.report_path is not None:
         print(f"Report written: {config.report_path}")
     return 0

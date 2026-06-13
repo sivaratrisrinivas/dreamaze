@@ -276,6 +276,8 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
     report = json.loads(evaluation_output.read_text())
     assert report["dataset_split"] == "validation"
     assert report["official_score"] == "single_sample_success"
+    assert "structure_stats" in report
+    assert "connected_component_mean" in report.get("structure_stats", {})
     summary = json.loads((tmp_path / "hf-job-summary.json").read_text())
     assert summary["maze_family"] == "kruskal"
     assert summary["positive_loss_weight"] == 8.0

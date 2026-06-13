@@ -24,6 +24,26 @@ class SolutionValidationResult:
     reason: ValidationReason | None = None
 
 
+@dataclass(frozen=True)
+class MaskStructureDiagnostics:
+    """Structural diagnostics computed on a proposed Solution Mask.
+
+    Used to produce stronger failure-mode signals (connected components,
+    degree distribution, wall violations, branch violations) before
+    changing training objectives. All counts are over the *proposed* mask cells.
+    """
+
+    marked_count: int
+    wall_crossing_count: int
+    connected_component_count: int
+    start_included: bool
+    goal_included: bool
+    endpoints_in_same_component: bool
+    # degree -> count of marked cells that have exactly that many 4-way mask neighbors
+    degree_histogram: dict[int, int]
+    extra_branch_violation_count: int
+
+
 def validate_solution_mask(
     *,
     grid_maze: BoolGrid,
@@ -145,3 +165,75 @@ def _has_extra_branch(
         if marked_neighbor_count != expected_neighbor_count:
             return True
     return False
+
+
+def compute_mask_structure_diagnostics(
+    *,
+    grid_maze: BoolGrid,
+    solution_mask: BoolGrid,
+    start_cell: Cell,
+    goal_cell: Cell,
+) -> MaskStructureDiagnostics:
+    """Compute rich structural diagnostics on a (sampled or proposed) solution mask.
+
+    These are intended for debugging why the strict validate_solution_mask
+    rejects samples (e.g. many components, wall crossings inside the marked set,
+    degree violations that indicate branches/dead-ends, endpoint reachability).
+    The diagnostics are always computed; they do not short-circuit like validation.
+    """
+    mask_cells = _marked_cells(solution_mask)
+    marked_count = len(mask_cells)
+
+    wall_crossing_count = sum(
+        not _is_open_cell(grid_maze, cell) for cell in mask_cells
+    )
+
+    connected_component_count = _count_connected_components(mask_cells)
+
+    start_included = start_cell in mask_cells
+    goal_included = goal_cell in mask_cells
+    if start_included:
+        start_comp = _connected_mask_cells(mask_cells, start_cell)
+        endpoints_in_same_component = goal_included and (goal_cell in start_comp)
+    else:
+        endpoints_in_same_component = False
+
+    degree_histogram: dict[int, int] = {}
+    for cell in mask_cells:
+        deg = sum(
+            1 for neighbor in _four_way_neighbors(cell) if neighbor in mask_cells
+        )
+        degree_histogram[deg] = degree_histogram.get(deg, 0) + 1
+
+    extra_branch_violation_count = 0
+    for cell in mask_cells:
+        marked_neighbor_count = sum(
+            neighbor in mask_cells for neighbor in _four_way_neighbors(cell)
+        )
+        expected_neighbor_count = 1 if cell in {start_cell, goal_cell} else 2
+        if marked_neighbor_count != expected_neighbor_count:
+            extra_branch_violation_count += 1
+
+    return MaskStructureDiagnostics(
+        marked_count=marked_count,
+        wall_crossing_count=wall_crossing_count,
+        connected_component_count=connected_component_count,
+        start_included=start_included,
+        goal_included=goal_included,
+        endpoints_in_same_component=endpoints_in_same_component,
+        degree_histogram=dict(sorted(degree_histogram.items())),
+        extra_branch_violation_count=extra_branch_violation_count,
+    )
+
+
+def _count_connected_components(mask_cells: set[Cell]) -> int:
+    if not mask_cells:
+        return 0
+    remaining = set(mask_cells)
+    count = 0
+    while remaining:
+        count += 1
+        seed = next(iter(remaining))
+        component = _connected_mask_cells(mask_cells, seed)
+        remaining -= component
+    return count

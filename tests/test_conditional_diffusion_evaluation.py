@@ -104,6 +104,9 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     assert sum(result.failure_reason_counts.values()) == (
         result.evaluated_examples - result.single_sample_success.valid_count
     )
+    assert "connected_component_mean" in result.structure_stats
+    assert "wall_crossing_count_mean" in result.structure_stats
+    assert result.structure_stats["endpoints_in_same_component_rate"] >= 0.0
 
     report = json.loads(result.to_json())
     assert report["dataset_split"] == "validation"
@@ -117,12 +120,17 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     assert "endpoint_raw_values" in report
     assert "endpoint_raw_value_examples" in report
     assert "threshold_calibration" in report
+    assert "structure_stats" in report
     assert len(report["endpoint_raw_value_examples"]) == 2
     assert len(report["threshold_calibration"]) > 1
     assert "raw_mean" in report["sampled_tensor_stats"]
     assert "start_cell_raw_mean" in report["endpoint_raw_values"]
     assert "goal_cell_raw_mean" in report["endpoint_raw_values"]
     assert report["retry_success"]["excluded_from_official_score"] is True
+    # structure stats always present even on random init
+    assert "connected_component_mean" in report["structure_stats"]
+    assert "wall_crossing_count_mean" in report["structure_stats"]
+    assert "extra_branch_violation_mean" in report["structure_stats"]
 
 
 def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
@@ -202,6 +210,7 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     assert "Goal Cell raw value:" in cli_output
     assert "Best threshold calibration:" in cli_output
     assert "Failure reasons:" in cli_output
+    assert "Structure diagnostics (primary):" in cli_output
 
 
 def test_endpoint_raw_value_diagnostics_compare_endpoints_to_label_and_background():
@@ -383,6 +392,10 @@ def test_threshold_calibration_payloads_report_candidate_validation_metrics():
     assert by_threshold[0.0]["both_endpoints_inclusion_rate"] == 1.0
     assert by_threshold[0.0]["marked_count_mean"] == 5.0
     assert by_threshold[0.0]["fraction_at_or_above_threshold"] == pytest.approx(5 / 25)
+    assert "connected_component_mean" in by_threshold[0.0]
+    assert "wall_crossing_count_mean" in by_threshold[0.0]
+    assert "extra_branch_violation_mean" in by_threshold[0.0]
+    assert "endpoints_in_same_component_rate" in by_threshold[0.0]
     assert by_threshold[0.25]["valid_count"] == 0
     assert by_threshold[0.25]["failure_reason_counts"] == {"missing_goal": 1}
 
@@ -417,6 +430,43 @@ def test_mask_includes_cell_rejects_unmarked_or_out_of_bounds_cells():
     assert _mask_includes_cell(mask, (-1, 0)) is False
     assert _mask_includes_cell(mask, (2, 0)) is False
     assert _mask_includes_cell(mask, (0, 2)) is False
+
+
+def test_endpoint_raw_value_example_payload_includes_structure_when_provided():
+    from dreamaze.validation import MaskStructureDiagnostics
+
+    diagnostics = _endpoint_raw_value_diagnostics(
+        raw_values=((-0.1, 0.8), (0.2, -0.4)),
+        label_mask=((1, 1), (0, 0)),
+        start_cell=(0, 0),
+        goal_cell=(0, 1),
+    )
+    structure = MaskStructureDiagnostics(
+        marked_count=2,
+        wall_crossing_count=0,
+        connected_component_count=1,
+        start_included=True,
+        goal_included=True,
+        endpoints_in_same_component=True,
+        degree_histogram={1: 2, 2: 0},
+        extra_branch_violation_count=0,
+    )
+
+    payload = _endpoint_raw_value_example_payload(
+        example_index=1,
+        validation_failure_reason=None,
+        start_cell_included=True,
+        goal_cell_included=True,
+        diagnostics=diagnostics,
+        tensor_stats_marked_count=2,
+        tensor_stats_fraction_at_or_above_threshold=0.5,
+        structure=structure,
+    )
+
+    assert "structure" in payload
+    assert payload["structure"]["connected_component_count"] == 1
+    assert payload["structure"]["extra_branch_violation_count"] == 0
+    assert payload["structure"]["degree_histogram"] == {1: 2, 2: 0}
 
 
 def _requires_diffusers_runtime() -> None:
