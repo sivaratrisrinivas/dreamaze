@@ -34,6 +34,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
                 "learning_rate": 0.025,
                 "positive_loss_weight": 8.0,
                 "endpoint_loss_weight": 32.0,
+                "mask_bce_loss_weight": 1.5,
+                "mask_dice_loss_weight": 0.75,
                 "training_seed": 123,
                 "evaluation_seed": 456,
                 "retry_count": 3,
@@ -72,6 +74,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
         learning_rate=0.025,
         positive_loss_weight=8.0,
         endpoint_loss_weight=32.0,
+        mask_bce_loss_weight=1.5,
+        mask_dice_loss_weight=0.75,
         training_seed=123,
         evaluation_seed=456,
         retry_count=3,
@@ -106,6 +110,10 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
     assert "8.0" in command
     assert "--endpoint-loss-weight" in command
     assert "32.0" in command
+    assert "--mask-bce-loss-weight" in command
+    assert "1.5" in command
+    assert "--mask-dice-loss-weight" in command
+    assert "0.75" in command
     assert "--maze-family" in command
     assert "kruskal" in command
     assert "--output-repo" in command
@@ -237,6 +245,10 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
             "8.0",
             "--endpoint-loss-weight",
             "32.0",
+            "--mask-bce-loss-weight",
+            "1.5",
+            "--mask-dice-loss-weight",
+            "0.75",
             "--training-seed",
             "7",
             "--evaluation-seed",
@@ -268,6 +280,8 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
     assert summary["maze_family"] == "kruskal"
     assert summary["positive_loss_weight"] == 8.0
     assert summary["endpoint_loss_weight"] == 32.0
+    assert summary["mask_bce_loss_weight"] == 1.5
+    assert summary["mask_dice_loss_weight"] == 0.75
 
 
 def _requires_diffusers_runtime() -> None:

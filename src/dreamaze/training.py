@@ -29,6 +29,8 @@ class TrainingConfig:
     num_workers: int = 0
     positive_loss_weight: float = 1.0
     endpoint_loss_weight: float = 1.0
+    mask_bce_loss_weight: float = 0.0
+    mask_dice_loss_weight: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -106,10 +108,21 @@ def train_conditional_diffusion_solver(config: TrainingConfig) -> TrainingResult
         model_input = torch.cat([noisy_target, condition], dim=1)
 
         predicted_noise = model(model_input, timesteps).sample
-        loss = _weighted_mse_loss(
+        noise_loss = _weighted_mse_loss(
             predicted=predicted_noise,
             target=noise,
             weights=loss_weights,
+        )
+        loss = noise_loss + _clean_mask_auxiliary_loss(
+            torch=torch,
+            noisy_target=noisy_target,
+            predicted_noise=predicted_noise,
+            clean_target=target,
+            timesteps=timesteps,
+            noise_scheduler=noise_scheduler,
+            weights=loss_weights,
+            bce_loss_weight=config.mask_bce_loss_weight,
+            dice_loss_weight=config.mask_dice_loss_weight,
         )
 
         optimizer.zero_grad(set_to_none=True)
@@ -155,6 +168,8 @@ def load_training_config(path: str | Path) -> TrainingConfig:
         num_workers=payload.get("num_workers", 0),
         positive_loss_weight=payload.get("positive_loss_weight", 1.0),
         endpoint_loss_weight=payload.get("endpoint_loss_weight", 1.0),
+        mask_bce_loss_weight=payload.get("mask_bce_loss_weight", 0.0),
+        mask_dice_loss_weight=payload.get("mask_dice_loss_weight", 0.0),
     )
     _validate_training_config(config)
     return config
@@ -300,6 +315,76 @@ def _weighted_mse_loss(*, predicted, target, weights):
     return ((predicted - target) ** 2 * weights).sum() / weights.sum()
 
 
+def _clean_mask_auxiliary_loss(
+    *,
+    torch,
+    noisy_target,
+    predicted_noise,
+    clean_target,
+    timesteps,
+    noise_scheduler,
+    weights,
+    bce_loss_weight: float,
+    dice_loss_weight: float,
+):
+    if bce_loss_weight == 0 and dice_loss_weight == 0:
+        return predicted_noise.new_tensor(0.0)
+
+    clean_logits = _predicted_clean_target_from_noise(
+        noisy_target=noisy_target,
+        predicted_noise=predicted_noise,
+        timesteps=timesteps,
+        noise_scheduler=noise_scheduler,
+    )
+    clean_labels = (clean_target + 1.0) / 2.0
+    auxiliary_loss = predicted_noise.new_tensor(0.0)
+    if bce_loss_weight:
+        auxiliary_loss = auxiliary_loss + bce_loss_weight * _weighted_bce_loss(
+            torch=torch,
+            logits=clean_logits,
+            target=clean_labels,
+            weights=weights,
+        )
+    if dice_loss_weight:
+        auxiliary_loss = auxiliary_loss + dice_loss_weight * _weighted_soft_dice_loss(
+            torch=torch,
+            logits=clean_logits,
+            target=clean_labels,
+            weights=weights,
+        )
+    return auxiliary_loss
+
+
+def _predicted_clean_target_from_noise(
+    *, noisy_target, predicted_noise, timesteps, noise_scheduler
+):
+    alphas_cumprod = noise_scheduler.alphas_cumprod.to(
+        device=noisy_target.device,
+        dtype=noisy_target.dtype,
+    )
+    alpha_prod_t = alphas_cumprod[timesteps].view(-1, 1, 1, 1)
+    beta_prod_t = 1 - alpha_prod_t
+    return (
+        noisy_target - beta_prod_t.sqrt() * predicted_noise
+    ) / alpha_prod_t.sqrt().clamp_min(1e-12)
+
+
+def _weighted_bce_loss(*, torch, logits, target, weights):
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(
+        logits,
+        target,
+        reduction="none",
+    )
+    return (loss * weights).sum() / weights.sum()
+
+
+def _weighted_soft_dice_loss(*, torch, logits, target, weights, smooth: float = 1.0):
+    probability = torch.sigmoid(logits)
+    intersection = (probability * target * weights).sum()
+    total = ((probability + target) * weights).sum()
+    return 1.0 - ((2.0 * intersection + smooth) / (total + smooth))
+
+
 def _condition_channels(example: TrainingExampleArrays) -> list[list[list[float]]]:
     rows = len(example.maze_condition)
     columns = len(example.maze_condition[0])
@@ -358,6 +443,8 @@ def _training_config_payload(config: TrainingConfig) -> Mapping[str, Any]:
         "num_workers": config.num_workers,
         "positive_loss_weight": config.positive_loss_weight,
         "endpoint_loss_weight": config.endpoint_loss_weight,
+        "mask_bce_loss_weight": config.mask_bce_loss_weight,
+        "mask_dice_loss_weight": config.mask_dice_loss_weight,
     }
 
 
@@ -414,6 +501,10 @@ def _validate_training_config(config: TrainingConfig) -> None:
         raise ValueError("Training positive loss weight must be positive")
     if config.endpoint_loss_weight <= 0:
         raise ValueError("Training endpoint loss weight must be positive")
+    if config.mask_bce_loss_weight < 0:
+        raise ValueError("Training mask BCE loss weight cannot be negative")
+    if config.mask_dice_loss_weight < 0:
+        raise ValueError("Training mask Dice loss weight cannot be negative")
     if config.device not in {"cpu", "cuda"}:
         raise ValueError("Training device must be cpu or cuda")
     if config.precision not in {"float32", "float16", "bfloat16"}:

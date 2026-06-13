@@ -4,6 +4,8 @@
   "maze_family": "kruskal",
   "positive_loss_weight": 8.0,
   "endpoint_loss_weight": 32.0,
+  "mask_bce_loss_weight": 1.0,
+  "mask_dice_loss_weight": 1.0,
   "output_repo": "Srini410/dreamaze-artifacts",
   "output_repo_type": "dataset",
   "output_path_in_repo": "runs/diffusers-t4-kruskal-weighted-10000-20260614",

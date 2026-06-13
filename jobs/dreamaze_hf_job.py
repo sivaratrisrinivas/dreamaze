@@ -69,6 +69,8 @@ def main() -> int:
         num_workers=args.num_workers,
         positive_loss_weight=args.positive_loss_weight,
         endpoint_loss_weight=args.endpoint_loss_weight,
+        mask_bce_loss_weight=args.mask_bce_loss_weight,
+        mask_dice_loss_weight=args.mask_dice_loss_weight,
     )
     training_result = train_conditional_diffusion_solver(training_config)
     latest_checkpoint = training_result.checkpoints[-1]
@@ -161,6 +163,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, required=True)
     parser.add_argument("--positive-loss-weight", type=float, default=1.0)
     parser.add_argument("--endpoint-loss-weight", type=float, default=1.0)
+    parser.add_argument("--mask-bce-loss-weight", type=float, default=0.0)
+    parser.add_argument("--mask-dice-loss-weight", type=float, default=0.0)
     parser.add_argument("--training-seed", type=int, required=True)
     parser.add_argument("--evaluation-seed", type=int, required=True)
     parser.add_argument("--retry-count", type=int, required=True)
@@ -225,6 +229,8 @@ def _write_run_summary(
         "checkpoint_every_steps": args.checkpoint_every_steps,
         "positive_loss_weight": args.positive_loss_weight,
         "endpoint_loss_weight": args.endpoint_loss_weight,
+        "mask_bce_loss_weight": args.mask_bce_loss_weight,
+        "mask_dice_loss_weight": args.mask_dice_loss_weight,
         "eval_split": args.eval_split,
         "device": args.device,
         "precision": args.precision,

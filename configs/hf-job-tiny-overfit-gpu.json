@@ -11,6 +11,8 @@
   "learning_rate": 0.0001,
   "positive_loss_weight": 8.0,
   "endpoint_loss_weight": 32.0,
+  "mask_bce_loss_weight": 1.0,
+  "mask_dice_loss_weight": 1.0,
   "training_seed": 612,
   "evaluation_seed": 613,
   "retry_count": 0,
@@ -18,9 +20,6 @@
   "device": "cuda",
   "precision": "float32",
   "num_workers": 0,
-  "output_repo": "Srini410/dreamaze-artifacts",
-  "output_repo_type": "dataset",
-  "output_path_in_repo": "runs/diffusers-t4-kruskal-tiny-overfit-weighted-20260614",
   "env": {
     "HF_XET_HIGH_PERFORMANCE": "1"
   }

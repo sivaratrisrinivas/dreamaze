@@ -13,6 +13,8 @@ from dreamaze.training import (
     TrainingConfig,
     TrainingExampleArrays,
     _loss_weight_channels,
+    _weighted_bce_loss,
+    _weighted_soft_dice_loss,
     load_training_config,
     _solution_mask_target_channels,
     _weighted_mse_loss,
@@ -96,6 +98,8 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
                 "num_workers": 0,
                 "positive_loss_weight": 8.0,
                 "endpoint_loss_weight": 32.0,
+                "mask_bce_loss_weight": 1.5,
+                "mask_dice_loss_weight": 0.75,
             }
         )
     )
@@ -116,6 +120,8 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
     assert config.num_workers == 0
     assert config.positive_loss_weight == 8.0
     assert config.endpoint_loss_weight == 32.0
+    assert config.mask_bce_loss_weight == 1.5
+    assert config.mask_dice_loss_weight == 0.75
 
 
 def test_training_encodes_solution_mask_targets_symmetrically():
@@ -173,6 +179,52 @@ def test_weighted_training_loss_is_normalized_by_total_weight():
     )
 
     assert loss.item() == pytest.approx(4.0)
+
+
+def test_weighted_mask_bce_loss_is_normalized_by_total_weight():
+    torch = pytest.importorskip("torch", exc_type=ImportError)
+
+    logits = torch.tensor([[[[0.0, 2.0]]]])
+    target = torch.tensor([[[[0.0, 1.0]]]])
+    weights = torch.tensor([[[[1.0, 3.0]]]])
+    loss = _weighted_bce_loss(
+        torch=torch,
+        logits=logits,
+        target=target,
+        weights=weights,
+    )
+    expected = (
+        torch.nn.functional.binary_cross_entropy_with_logits(
+            logits,
+            target,
+            reduction="none",
+        )
+        * weights
+    ).sum() / weights.sum()
+
+    assert loss.item() == pytest.approx(expected.item())
+
+
+def test_weighted_soft_dice_loss_rewards_mask_overlap():
+    torch = pytest.importorskip("torch", exc_type=ImportError)
+
+    target = torch.tensor([[[[0.0, 1.0, 1.0]]]])
+    weights = torch.ones_like(target)
+
+    good_loss = _weighted_soft_dice_loss(
+        torch=torch,
+        logits=torch.tensor([[[[-8.0, 8.0, 8.0]]]]),
+        target=target,
+        weights=weights,
+    )
+    bad_loss = _weighted_soft_dice_loss(
+        torch=torch,
+        logits=torch.tensor([[[[8.0, -8.0, -8.0]]]]),
+        target=target,
+        weights=weights,
+    )
+
+    assert good_loss.item() < bad_loss.item()
 
 
 def test_training_config_controls_checkpoint_cadence(tmp_path):
