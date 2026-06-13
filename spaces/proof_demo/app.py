@@ -30,6 +30,8 @@ _CHECKPOINT_REPO_ID = os.environ.get("DREAMAZE_CHECKPOINT_REPO_ID")
 _CHECKPOINT_REPO_PATH = os.environ.get("DREAMAZE_CHECKPOINT_REPO_PATH")
 _CHECKPOINT_REVISION = os.environ.get("DREAMAZE_CHECKPOINT_REVISION")
 _ALLOW_SMOKE_MODE = os.environ.get("DREAMAZE_ALLOW_SMOKE_MODE") == "1"
+_REQUESTED_DEVICE = os.environ.get("DREAMAZE_DEVICE", "auto")
+_REQUESTED_PRECISION = os.environ.get("DREAMAZE_PRECISION", "auto")
 
 
 _CHECKPOINT_PATH_CACHE: Path | None = None
@@ -63,6 +65,47 @@ def _resolve_checkpoint_path() -> Path | None:
         "Set DREAMAZE_CHECKPOINT_PATH or DREAMAZE_CHECKPOINT_REPO_ID + "
         "DREAMAZE_CHECKPOINT_REPO_PATH to a Trained Solver Checkpoint"
     )
+
+
+def _resolve_solver_runtime() -> tuple[str, str]:
+    requested_device = _REQUESTED_DEVICE.lower()
+    requested_precision = _REQUESTED_PRECISION.lower()
+    if requested_device not in {"auto", "cpu", "cuda"}:
+        raise RuntimeError("DREAMAZE_DEVICE must be auto, cpu, or cuda")
+    if requested_precision not in {"auto", "float32", "float16", "bfloat16"}:
+        raise RuntimeError(
+            "DREAMAZE_PRECISION must be auto, float32, float16, or bfloat16"
+        )
+
+    try:
+        import torch
+    except ImportError as error:
+        raise RuntimeError("PyTorch is required to run the Dreamaze solver") from error
+
+    cuda_available = torch.cuda.is_available()
+    if requested_device == "cuda" and not cuda_available:
+        raise RuntimeError("DREAMAZE_DEVICE=cuda was requested but CUDA is unavailable")
+
+    device = "cuda" if requested_device == "auto" and cuda_available else requested_device
+    if device == "auto":
+        device = "cpu"
+
+    precision = requested_precision
+    if precision == "auto":
+        precision = "float16" if device == "cuda" else "float32"
+
+    if device == "cuda":
+        print(
+            "Dreamaze solver runtime: "
+            f"device=cuda precision={precision} "
+            f"cuda_device={torch.cuda.get_device_name(torch.cuda.current_device())}",
+            flush=True,
+        )
+    else:
+        print("Dreamaze solver runtime: device=cpu precision=float32", flush=True)
+        precision = "float32"
+
+    return device, precision
 
 
 if not (_CHECKPOINT_ENV or (_CHECKPOINT_REPO_ID and _CHECKPOINT_REPO_PATH) or _ALLOW_SMOKE_MODE):
@@ -101,6 +144,7 @@ def run_automated_demo() -> str:
     maze_family = rng.choice([MazeFamily.KRUSKAL, MazeFamily.WILSON])
     maze_seed = rng.randrange(2000, 88000)
     sampling_steps = 32
+    device, precision = _resolve_solver_runtime()
 
     result = run_proof_demo(
         ProofDemoConfig(
@@ -112,6 +156,8 @@ def run_automated_demo() -> str:
             debug_reveal=False,
             capture_trajectory=True,
             seed=rng.randrange(0, 1_000_000),
+            device=device,
+            precision=precision,
         )
     )
     return build_diffusion_viz_html(
@@ -143,6 +189,7 @@ def stream_automated_demo_events() -> Iterator[dict]:
     rng = random.Random(tseed)
     maze_family = rng.choice([MazeFamily.KRUSKAL, MazeFamily.WILSON])
     maze_seed = rng.randrange(2000, 88000)
+    device, precision = _resolve_solver_runtime()
 
     yield from iter_proof_demo_stream_events(
         ProofDemoConfig(
@@ -154,6 +201,8 @@ def stream_automated_demo_events() -> Iterator[dict]:
             debug_reveal=False,
             capture_trajectory=False,
             seed=rng.randrange(0, 1_000_000),
+            device=device,
+            precision=precision,
         )
     )
 

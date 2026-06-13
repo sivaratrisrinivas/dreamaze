@@ -32,6 +32,8 @@ class ProofDemoConfig:
     seed: int = 0
     debug_reveal: bool = False
     capture_trajectory: bool = False
+    device: str = "cpu"
+    precision: str = "float32"
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,11 @@ def iter_proof_demo_stream_events(
             split="demo",
         ),
     )
-    solver = load_diffusers_solver_checkpoint(checkpoint_path=config.checkpoint_path)
+    solver = load_diffusers_solver_checkpoint(
+        checkpoint_path=config.checkpoint_path,
+        device=config.device,
+        precision=config.precision,
+    )
     sampling_example = _sampling_example_from_training_example(example)
     total_steps = config.sampling_steps
     total_frames = config.sampling_steps + 1
@@ -139,7 +145,11 @@ def run_proof_demo(config: ProofDemoConfig) -> ProofDemoResult:
             split="demo",
         ),
     )
-    solver = load_diffusers_solver_checkpoint(checkpoint_path=config.checkpoint_path)
+    solver = load_diffusers_solver_checkpoint(
+        checkpoint_path=config.checkpoint_path,
+        device=config.device,
+        precision=config.precision,
+    )
     sampling_example = _sampling_example_from_training_example(example)
     if config.capture_trajectory:
         intermediates = sample_conditional_diffusion_solution_mask_trajectory(
@@ -383,6 +393,10 @@ def _validate_proof_demo_config(config: ProofDemoConfig) -> None:
         raise ValueError("Proof Demo sampling steps must be positive")
     if config.retry_count < 0:
         raise ValueError("Proof Demo retry count cannot be negative")
+    if config.device not in {"cpu", "cuda"}:
+        raise ValueError("Proof Demo device must be cpu or cuda")
+    if config.precision not in {"float32", "float16", "bfloat16"}:
+        raise ValueError("Proof Demo precision must be float32, float16, or bfloat16")
 
 
 # --- Real-time diffusion visualization (HTML/CSS/JS player for Proof Demo) ---

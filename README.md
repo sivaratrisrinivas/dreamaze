@@ -96,3 +96,14 @@ DREAMAZE_CHECKPOINT_REPO_PATH=checkpoints/diffusers-t4-budget-1000-retry-2026061
 `T4_SMALL` hardware, sets a 300-second idle sleep timeout, and restarts the
 Space. Checkpoint loading is lazy: the Space starts first, then downloads the
 solver checkpoint when `Solve New Maze` is clicked.
+
+The Proof Demo runtime auto-selects CUDA when Hugging Face attaches GPU hardware.
+On `T4_SMALL`, the solver runs with `device=cuda` and `precision=float16`; if no
+GPU is available, it falls back to CPU with `float32`. You can override this with
+`DREAMAZE_DEVICE=cpu|cuda|auto` and `DREAMAZE_PRECISION=float32|float16|bfloat16|auto`.
+
+After clicking `Solve New Maze`, the Space logs should include a line like:
+
+```text
+Dreamaze solver runtime: device=cuda precision=float16 cuda_device=Tesla T4
+```

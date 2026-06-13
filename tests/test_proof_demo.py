@@ -57,14 +57,19 @@ def test_diffusion_viz_html_falls_back_without_trajectory():
 def test_proof_demo_stream_events_emit_init_frames_and_done(monkeypatch, tmp_path):
     checkpoint_dir = tmp_path / "checkpoint-step-000001"
     checkpoint_dir.mkdir()
+    loaded_kwargs = {}
     masks = [
         ((False, False, False), (False, True, False), (False, False, False)),
         ((False, True, False), (False, True, False), (False, True, False)),
     ]
 
+    def fake_load_solver(**kwargs):
+        loaded_kwargs.update(kwargs)
+        return object()
+
     monkeypatch.setattr(
         "dreamaze.proof_demo.load_diffusers_solver_checkpoint",
-        lambda **_kwargs: object(),
+        fake_load_solver,
     )
     monkeypatch.setattr(
         "dreamaze.proof_demo.iter_conditional_diffusion_solution_mask_trajectory",
@@ -72,9 +77,20 @@ def test_proof_demo_stream_events_emit_init_frames_and_done(monkeypatch, tmp_pat
     )
 
     events = list(
-        iter_proof_demo_stream_events(_minimal_config(checkpoint_path=checkpoint_dir))
+        iter_proof_demo_stream_events(
+            _minimal_config(
+                checkpoint_path=checkpoint_dir,
+                device="cuda",
+                precision="float16",
+            )
+        )
     )
 
+    assert loaded_kwargs == {
+        "checkpoint_path": checkpoint_dir,
+        "device": "cuda",
+        "precision": "float16",
+    }
     assert events[0]["type"] == "init"
     assert events[0]["totalSteps"] == 2
     assert events[0]["totalFrames"] == 3
@@ -136,6 +152,40 @@ def test_space_app_can_resolve_checkpoint_from_hugging_face_repo_env(
     module = _load_space_app("dreamaze_space_repo_checkpoint")
 
     assert module._resolve_checkpoint_path() == checkpoint_dir
+
+
+def test_space_app_uses_cuda_float16_when_gpu_is_available(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    monkeypatch.delenv("DREAMAZE_DEVICE", raising=False)
+    monkeypatch.delenv("DREAMAZE_PRECISION", raising=False)
+
+    fake_cuda = types.SimpleNamespace(
+        is_available=lambda: True,
+        current_device=lambda: 0,
+        get_device_name=lambda _device: "Tesla T4",
+    )
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=fake_cuda))
+
+    module = _load_space_app("dreamaze_space_cuda_runtime")
+
+    assert module._resolve_solver_runtime() == ("cuda", "float16")
+
+
+def test_space_app_uses_cpu_float32_when_gpu_is_unavailable(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    monkeypatch.delenv("DREAMAZE_DEVICE", raising=False)
+    monkeypatch.delenv("DREAMAZE_PRECISION", raising=False)
+
+    fake_cuda = types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=fake_cuda))
+
+    module = _load_space_app("dreamaze_space_cpu_runtime")
+
+    assert module._resolve_solver_runtime() == ("cpu", "float32")
 
 
 def test_space_app_exposes_only_solve_new_maze_handler(monkeypatch, tmp_path):
@@ -213,7 +263,12 @@ def _load_space_app(module_name: str):
     return module
 
 
-def _minimal_config(*, checkpoint_path: Path):
+def _minimal_config(
+    *,
+    checkpoint_path: Path,
+    device: str = "cpu",
+    precision: str = "float32",
+):
     from dreamaze.proof_demo import ProofDemoConfig
 
     return ProofDemoConfig(
@@ -223,6 +278,8 @@ def _minimal_config(*, checkpoint_path: Path):
         maze_seed=123,
         sampling_steps=2,
         seed=7,
+        device=device,
+        precision=precision,
     )
 
 
