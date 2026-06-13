@@ -56,6 +56,20 @@ def run_evaluation_cli(argv: Sequence[str] | None = None) -> int:
         "Goal Cell raw value: "
         f"{result.endpoint_raw_values['goal_cell_raw_mean']:.6f}"
     )
+    best_threshold = max(
+        result.threshold_calibration,
+        key=lambda item: (
+            item["valid_solution_rate"],
+            item["both_endpoints_inclusion_rate"],
+            item["mask_overlap"],
+        ),
+    )
+    print(
+        "Best threshold calibration: "
+        f"threshold={best_threshold['threshold']:.2f} "
+        f"valid_solution_rate={best_threshold['valid_solution_rate']:.6f} "
+        f"both_endpoints={best_threshold['both_endpoints_inclusion_rate']:.6f}"
+    )
     if result.retry_success is not None:
         print(
             "Retry Success: "

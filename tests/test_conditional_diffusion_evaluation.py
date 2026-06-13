@@ -15,6 +15,7 @@ from dreamaze.evaluation import (
     _endpoint_inclusion_payload,
     _endpoint_raw_value_example_payload,
     _endpoint_raw_value_diagnostics,
+    _threshold_calibration_payloads,
     _mask_includes_cell,
     _mask_overlap_excluding_cells,
 )
@@ -115,7 +116,9 @@ def test_evaluation_reports_single_sample_success_and_diagnostics(tmp_path):
     assert "sampled_tensor_stats" in report
     assert "endpoint_raw_values" in report
     assert "endpoint_raw_value_examples" in report
+    assert "threshold_calibration" in report
     assert len(report["endpoint_raw_value_examples"]) == 2
+    assert len(report["threshold_calibration"]) > 1
     assert "raw_mean" in report["sampled_tensor_stats"]
     assert "start_cell_raw_mean" in report["endpoint_raw_values"]
     assert "goal_cell_raw_mean" in report["endpoint_raw_values"]
@@ -197,6 +200,7 @@ def test_evaluation_cli_writes_json_report_from_config_file(tmp_path, capsys):
     assert "Mask overlap excluding endpoints:" in cli_output
     assert "Start Cell raw value:" in cli_output
     assert "Goal Cell raw value:" in cli_output
+    assert "Best threshold calibration:" in cli_output
     assert "Failure reasons:" in cli_output
 
 
@@ -322,6 +326,65 @@ def test_endpoint_inclusion_payload_reports_separate_endpoint_rates():
         "both_endpoints_inclusion_rate": 0.25,
         "mask_overlap_excluding_endpoints": 0.5,
     }
+
+
+def test_threshold_calibration_payloads_report_candidate_validation_metrics():
+    from dreamaze.evaluation import SampledSolutionMask, SampledTensorStats
+    from dreamaze.training import TrainingExampleArrays
+
+    example = TrainingExampleArrays(
+        maze_condition=(
+            (1, 1, 1, 1, 1),
+            (1, 1, 1, 1, 1),
+            (1, 1, 1, 1, 1),
+            (1, 1, 1, 1, 1),
+            (1, 1, 1, 1, 1),
+        ),
+        solution_mask=(
+            (0, 0, 0, 0, 0),
+            (0, 1, 1, 1, 0),
+            (0, 0, 0, 1, 0),
+            (0, 0, 0, 1, 0),
+            (0, 0, 0, 0, 0),
+        ),
+        start_cell=(0, 0),
+        goal_cell=(1, 1),
+    )
+    sample = SampledSolutionMask(
+        mask=(
+            (False, False, False, False, False),
+            (False, True, True, True, False),
+            (False, False, False, True, False),
+            (False, False, False, True, False),
+            (False, False, False, False, False),
+        ),
+        raw_values=(
+            (-0.9, -0.9, -0.9, -0.9, -0.9),
+            (-0.9, 0.6, 0.4, 0.2, -0.9),
+            (-0.9, -0.9, -0.9, 0.1, -0.9),
+            (-0.9, -0.9, -0.9, 0.0, -0.9),
+            (-0.9, -0.9, -0.9, -0.9, -0.9),
+        ),
+        tensor_stats=SampledTensorStats(
+            raw_min=-0.9,
+            raw_max=0.6,
+            raw_mean=-0.656,
+            fraction_at_or_above_threshold=5 / 25,
+            marked_count=5,
+            total_cells=25,
+        ),
+    )
+
+    payloads = _threshold_calibration_payloads([(example, sample)])
+    by_threshold = {item["threshold"]: item for item in payloads}
+
+    assert by_threshold[0.0]["valid_count"] == 1
+    assert by_threshold[0.0]["valid_solution_rate"] == 1.0
+    assert by_threshold[0.0]["both_endpoints_inclusion_rate"] == 1.0
+    assert by_threshold[0.0]["marked_count_mean"] == 5.0
+    assert by_threshold[0.0]["fraction_at_or_above_threshold"] == pytest.approx(5 / 25)
+    assert by_threshold[0.25]["valid_count"] == 0
+    assert by_threshold[0.25]["failure_reason_counts"] == {"missing_goal": 1}
 
 
 def test_mask_overlap_excluding_cells_reports_body_overlap_without_endpoints():

@@ -23,6 +23,8 @@ from dreamaze.training import (
 )
 from dreamaze.validation import validate_solution_mask
 
+_THRESHOLD_CALIBRATION_CANDIDATES = (-0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75)
+
 
 @dataclass(frozen=True)
 class EvaluationConfig:
@@ -72,6 +74,7 @@ class EvaluationResult:
     endpoint_raw_values: Mapping[str, float | int]
     endpoint_raw_value_examples: tuple[Mapping[str, Any], ...]
     failure_reason_counts: Mapping[str, int]
+    threshold_calibration: tuple[Mapping[str, Any], ...]
 
     def to_json(self) -> str:
         return json.dumps(self.to_payload(), indent=2, sort_keys=True) + "\n"
@@ -100,6 +103,9 @@ class EvaluationResult:
                 dict(item) for item in self.endpoint_raw_value_examples
             ],
             "failure_reason_counts": dict(self.failure_reason_counts),
+            "threshold_calibration": [
+                dict(item) for item in self.threshold_calibration
+            ],
         }
         if self.retry_success is not None:
             payload["retry_success"] = self.retry_success.to_payload()
@@ -190,6 +196,7 @@ def evaluate_conditional_diffusion_solver(
     sampled_tensor_stats: list[SampledTensorStats] = []
     endpoint_raw_value_diagnostics: list[EndpointRawValueDiagnostics] = []
     endpoint_raw_value_examples: list[Mapping[str, Any]] = []
+    threshold_calibration_examples: list[tuple[TrainingExampleArrays, SampledSolutionMask]] = []
 
     for index, example in enumerate(examples):
         first_sample = sample_conditional_diffusion_solution_mask_with_stats(
@@ -199,6 +206,7 @@ def evaluate_conditional_diffusion_solver(
             seed=config.seed + index,
         )
         first_mask = first_sample.mask
+        threshold_calibration_examples.append((example, first_sample))
         sampled_tensor_stats.append(first_sample.tensor_stats)
         rendered_start_cell = _rendered_cell(example.start_cell)
         rendered_goal_cell = _rendered_cell(example.goal_cell)
@@ -305,6 +313,9 @@ def evaluate_conditional_diffusion_solver(
         ),
         endpoint_raw_value_examples=tuple(endpoint_raw_value_examples),
         failure_reason_counts=dict(sorted(failure_reasons.items())),
+        threshold_calibration=_threshold_calibration_payloads(
+            threshold_calibration_examples
+        ),
     )
 
 
@@ -761,6 +772,104 @@ def _percentile(values: list[float], value: float) -> float:
 
 def _mean(values: list[float | int]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def _threshold_calibration_payloads(
+    examples: list[tuple[TrainingExampleArrays, SampledSolutionMask]],
+) -> tuple[Mapping[str, Any], ...]:
+    return tuple(
+        _threshold_calibration_payload(
+            examples=examples,
+            threshold=threshold,
+        )
+        for threshold in _THRESHOLD_CALIBRATION_CANDIDATES
+    )
+
+
+def _threshold_calibration_payload(
+    *,
+    examples: list[tuple[TrainingExampleArrays, SampledSolutionMask]],
+    threshold: float,
+) -> Mapping[str, Any]:
+    valid_count = 0
+    failure_reasons: Counter[str] = Counter()
+    mask_overlaps: list[float] = []
+    marked_counts: list[int] = []
+    start_cell_included_count = 0
+    goal_cell_included_count = 0
+    both_endpoints_included_count = 0
+
+    for example, sample in examples:
+        mask = _mask_from_raw_values(sample.raw_values, threshold)
+        rendered_start_cell = _rendered_cell(example.start_cell)
+        rendered_goal_cell = _rendered_cell(example.goal_cell)
+        result = validate_solution_mask(
+            grid_maze=_bool_grid(example.maze_condition),
+            solution_mask=mask,
+            start_cell=rendered_start_cell,
+            goal_cell=rendered_goal_cell,
+        )
+        if result.valid:
+            valid_count += 1
+        else:
+            failure_reasons[str(result.reason)] += 1
+        mask_overlaps.append(
+            _mask_overlap(proposed_mask=mask, label_mask=example.solution_mask)
+        )
+        marked_counts.append(sum(1 for row in mask for value in row if value))
+        start_cell_included = _mask_includes_cell(mask, rendered_start_cell)
+        goal_cell_included = _mask_includes_cell(mask, rendered_goal_cell)
+        if start_cell_included:
+            start_cell_included_count += 1
+        if goal_cell_included:
+            goal_cell_included_count += 1
+        if start_cell_included and goal_cell_included:
+            both_endpoints_included_count += 1
+
+    evaluated_examples = len(examples)
+    total_cells = sum(
+        len(sample.raw_values) * len(sample.raw_values[0])
+        for _, sample in examples
+    )
+    marked_count = sum(marked_counts)
+    return {
+        "threshold": threshold,
+        "valid_count": valid_count,
+        "evaluated_examples": evaluated_examples,
+        "valid_solution_rate": (
+            valid_count / evaluated_examples if evaluated_examples else 0.0
+        ),
+        "failure_reason_counts": dict(sorted(failure_reasons.items())),
+        "mask_overlap": _mean(mask_overlaps),
+        "marked_count_mean": _mean(marked_counts),
+        "fraction_at_or_above_threshold": (
+            marked_count / total_cells if total_cells else 0.0
+        ),
+        "start_cell_inclusion_rate": (
+            start_cell_included_count / evaluated_examples
+            if evaluated_examples
+            else 0.0
+        ),
+        "goal_cell_inclusion_rate": (
+            goal_cell_included_count / evaluated_examples
+            if evaluated_examples
+            else 0.0
+        ),
+        "both_endpoints_inclusion_rate": (
+            both_endpoints_included_count / evaluated_examples
+            if evaluated_examples
+            else 0.0
+        ),
+    }
+
+
+def _mask_from_raw_values(
+    raw_values: tuple[tuple[float, ...], ...], threshold: float
+) -> tuple[tuple[bool, ...], ...]:
+    return tuple(
+        tuple(value >= threshold for value in row)
+        for row in raw_values
+    )
 
 
 def _mask_overlap(

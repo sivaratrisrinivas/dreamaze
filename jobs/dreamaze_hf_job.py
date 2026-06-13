@@ -106,6 +106,20 @@ def main() -> int:
         f"goal={evaluation_result.endpoint_inclusion['goal_cell_inclusion_rate']:.6f} "
         f"both={evaluation_result.endpoint_inclusion['both_endpoints_inclusion_rate']:.6f}"
     )
+    best_threshold = max(
+        evaluation_result.threshold_calibration,
+        key=lambda item: (
+            item["valid_solution_rate"],
+            item["both_endpoints_inclusion_rate"],
+            item["mask_overlap"],
+        ),
+    )
+    print(
+        "Best threshold calibration: "
+        f"threshold={best_threshold['threshold']:.2f} "
+        f"valid_solution_rate={best_threshold['valid_solution_rate']:.6f} "
+        f"both_endpoints={best_threshold['both_endpoints_inclusion_rate']:.6f}"
+    )
 
     _write_run_summary(
         run_dir=run_dir,
