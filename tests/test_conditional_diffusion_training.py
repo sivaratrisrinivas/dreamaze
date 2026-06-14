@@ -15,6 +15,7 @@ from dreamaze.training import (
     _loss_weight_channels,
     _weighted_bce_loss,
     _weighted_soft_dice_loss,
+    _wall_suppression_loss,
     load_training_config,
     _solution_mask_target_channels,
     _weighted_mse_loss,
@@ -100,6 +101,7 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
                 "endpoint_loss_weight": 32.0,
                 "mask_bce_loss_weight": 1.5,
                 "mask_dice_loss_weight": 0.75,
+                "wall_loss_weight": 2.5,
             }
         )
     )
@@ -122,6 +124,7 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
     assert config.endpoint_loss_weight == 32.0
     assert config.mask_bce_loss_weight == 1.5
     assert config.mask_dice_loss_weight == 0.75
+    assert config.wall_loss_weight == 2.5
 
 
 def test_training_encodes_solution_mask_targets_symmetrically():
@@ -225,6 +228,33 @@ def test_weighted_soft_dice_loss_rewards_mask_overlap():
     )
 
     assert good_loss.item() < bad_loss.item()
+
+
+def test_wall_suppression_loss_penalizes_closed_maze_cells_only():
+    torch = pytest.importorskip("torch", exc_type=ImportError)
+
+    clean_logits = torch.tensor([[[[8.0, 8.0, -8.0]]]])
+    condition = torch.tensor(
+        [
+            [
+                [[1.0, 0.0, 0.0]],
+                [[0.0, 0.0, 0.0]],
+                [[0.0, 0.0, 0.0]],
+            ]
+        ]
+    )
+
+    loss = _wall_suppression_loss(
+        torch=torch,
+        clean_logits=clean_logits,
+        condition=condition,
+    )
+    expected = torch.nn.functional.binary_cross_entropy_with_logits(
+        torch.tensor([8.0, -8.0]),
+        torch.tensor([0.0, 0.0]),
+    )
+
+    assert loss.item() == pytest.approx(expected.item())
 
 
 def test_training_config_controls_checkpoint_cadence(tmp_path):

@@ -26,6 +26,7 @@ _DEFAULTS = {
     "endpoint_loss_weight": 1.0,
     "mask_bce_loss_weight": 0.0,
     "mask_dice_loss_weight": 0.0,
+    "wall_loss_weight": 0.0,
     "training_seed": 0,
     "evaluation_seed": 0,
     "retry_count": 0,
@@ -94,6 +95,7 @@ class HuggingFaceJobConfig:
     endpoint_loss_weight: float = 1.0
     mask_bce_loss_weight: float = 0.0
     mask_dice_loss_weight: float = 0.0
+    wall_loss_weight: float = 0.0
     training_seed: int = 0
     evaluation_seed: int = 0
     retry_count: int = 0
@@ -145,6 +147,9 @@ def load_huggingface_job_config(path: str | Path) -> HuggingFaceJobConfig:
         ),
         mask_dice_loss_weight=payload.get(
             "mask_dice_loss_weight", _DEFAULTS["mask_dice_loss_weight"]
+        ),
+        wall_loss_weight=payload.get(
+            "wall_loss_weight", _DEFAULTS["wall_loss_weight"]
         ),
         training_seed=payload.get("training_seed", _DEFAULTS["training_seed"]),
         evaluation_seed=payload.get("evaluation_seed", _DEFAULTS["evaluation_seed"]),
@@ -246,6 +251,8 @@ def _remote_script_args(config: HuggingFaceJobConfig) -> list[str]:
         str(config.mask_bce_loss_weight),
         "--mask-dice-loss-weight",
         str(config.mask_dice_loss_weight),
+        "--wall-loss-weight",
+        str(config.wall_loss_weight),
         "--training-seed",
         str(config.training_seed),
         "--evaluation-seed",
@@ -313,6 +320,8 @@ def _validate_huggingface_job_config(config: HuggingFaceJobConfig) -> None:
         raise ValueError("Hugging Face job mask BCE loss weight cannot be negative")
     if config.mask_dice_loss_weight < 0:
         raise ValueError("Hugging Face job mask Dice loss weight cannot be negative")
+    if config.wall_loss_weight < 0:
+        raise ValueError("Hugging Face job wall loss weight cannot be negative")
     if config.maze_family not in {None, "kruskal", "wilson"}:
         raise ValueError("Hugging Face job maze family must be kruskal or wilson")
     if config.retry_count < 0:
