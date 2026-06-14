@@ -13,7 +13,7 @@
   "endpoint_loss_weight": 32.0,
   "mask_bce_loss_weight": 1.0,
   "mask_dice_loss_weight": 1.0,
-  "wall_loss_weight": 1.0,
+  "wall_loss_weight": 0.25,
   "training_seed": 612,
   "evaluation_seed": 613,
   "retry_count": 0,
