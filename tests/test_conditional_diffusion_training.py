@@ -13,6 +13,7 @@ from dreamaze.training import (
     TrainingConfig,
     TrainingExampleArrays,
     _loss_weight_channels,
+    _off_path_suppression_loss,
     _path_continuity_loss,
     _weighted_bce_loss,
     _weighted_soft_dice_loss,
@@ -104,6 +105,7 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
                 "mask_dice_loss_weight": 0.75,
                 "wall_loss_weight": 2.5,
                 "path_continuity_loss_weight": 1.25,
+                "off_path_loss_weight": 3.5,
             }
         )
     )
@@ -128,6 +130,7 @@ def test_training_config_loads_runtime_and_hardware_settings(tmp_path):
     assert config.mask_dice_loss_weight == 0.75
     assert config.wall_loss_weight == 2.5
     assert config.path_continuity_loss_weight == 1.25
+    assert config.off_path_loss_weight == 3.5
 
 
 def test_training_encodes_solution_mask_targets_symmetrically():
@@ -283,6 +286,25 @@ def test_path_continuity_loss_penalizes_broken_label_edges():
 
     assert complete_path_loss.item() < broken_path_loss.item()
     assert broken_path_loss.item() == pytest.approx(expected_broken_loss.item())
+
+
+def test_off_path_suppression_loss_penalizes_non_label_cells_only():
+    torch = pytest.importorskip("torch", exc_type=ImportError)
+
+    clean_logits = torch.tensor([[[[8.0, 8.0, -8.0]]]])
+    clean_labels = torch.tensor([[[[0.0, 1.0, 0.0]]]])
+
+    loss = _off_path_suppression_loss(
+        torch=torch,
+        clean_logits=clean_logits,
+        clean_labels=clean_labels,
+    )
+    expected = torch.nn.functional.binary_cross_entropy_with_logits(
+        torch.tensor([8.0, -8.0]),
+        torch.tensor([0.0, 0.0]),
+    )
+
+    assert loss.item() == pytest.approx(expected.item())
 
 
 def test_training_config_controls_checkpoint_cadence(tmp_path):

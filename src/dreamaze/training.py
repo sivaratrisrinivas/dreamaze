@@ -33,6 +33,7 @@ class TrainingConfig:
     mask_dice_loss_weight: float = 0.0
     wall_loss_weight: float = 0.0
     path_continuity_loss_weight: float = 0.0
+    off_path_loss_weight: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ def train_conditional_diffusion_solver(config: TrainingConfig) -> TrainingResult
             dice_loss_weight=config.mask_dice_loss_weight,
             wall_loss_weight=config.wall_loss_weight,
             path_continuity_loss_weight=config.path_continuity_loss_weight,
+            off_path_loss_weight=config.off_path_loss_weight,
         )
 
         optimizer.zero_grad(set_to_none=True)
@@ -177,6 +179,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
         mask_dice_loss_weight=payload.get("mask_dice_loss_weight", 0.0),
         wall_loss_weight=payload.get("wall_loss_weight", 0.0),
         path_continuity_loss_weight=payload.get("path_continuity_loss_weight", 0.0),
+        off_path_loss_weight=payload.get("off_path_loss_weight", 0.0),
     )
     _validate_training_config(config)
     return config
@@ -336,12 +339,14 @@ def _clean_mask_auxiliary_loss(
     dice_loss_weight: float,
     wall_loss_weight: float,
     path_continuity_loss_weight: float,
+    off_path_loss_weight: float,
 ):
     if (
         bce_loss_weight == 0
         and dice_loss_weight == 0
         and wall_loss_weight == 0
         and path_continuity_loss_weight == 0
+        and off_path_loss_weight == 0
     ):
         return predicted_noise.new_tensor(0.0)
 
@@ -379,6 +384,16 @@ def _clean_mask_auxiliary_loss(
             auxiliary_loss
             + path_continuity_loss_weight
             * _path_continuity_loss(
+                torch=torch,
+                clean_logits=clean_logits,
+                clean_labels=clean_labels,
+            )
+        )
+    if off_path_loss_weight:
+        auxiliary_loss = (
+            auxiliary_loss
+            + off_path_loss_weight
+            * _off_path_suppression_loss(
                 torch=torch,
                 clean_logits=clean_logits,
                 clean_labels=clean_labels,
@@ -457,6 +472,16 @@ def _path_continuity_loss(*, torch, clean_logits, clean_labels):
     ) / edge_count.clamp_min(1.0)
 
 
+def _off_path_suppression_loss(*, torch, clean_logits, clean_labels):
+    off_path_weights = (clean_labels <= 0.0).to(dtype=clean_logits.dtype)
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(
+        clean_logits,
+        torch.zeros_like(clean_logits),
+        reduction="none",
+    )
+    return (loss * off_path_weights).sum() / off_path_weights.sum().clamp_min(1.0)
+
+
 def _condition_channels(example: TrainingExampleArrays) -> list[list[list[float]]]:
     rows = len(example.maze_condition)
     columns = len(example.maze_condition[0])
@@ -519,6 +544,7 @@ def _training_config_payload(config: TrainingConfig) -> Mapping[str, Any]:
         "mask_dice_loss_weight": config.mask_dice_loss_weight,
         "wall_loss_weight": config.wall_loss_weight,
         "path_continuity_loss_weight": config.path_continuity_loss_weight,
+        "off_path_loss_weight": config.off_path_loss_weight,
     }
 
 
@@ -583,6 +609,8 @@ def _validate_training_config(config: TrainingConfig) -> None:
         raise ValueError("Training wall loss weight cannot be negative")
     if config.path_continuity_loss_weight < 0:
         raise ValueError("Training path continuity loss weight cannot be negative")
+    if config.off_path_loss_weight < 0:
+        raise ValueError("Training off-path loss weight cannot be negative")
     if config.device not in {"cpu", "cuda"}:
         raise ValueError("Training device must be cpu or cuda")
     if config.precision not in {"float32", "float16", "bfloat16"}:

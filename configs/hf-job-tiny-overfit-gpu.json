@@ -15,6 +15,7 @@
   "mask_dice_loss_weight": 1.0,
   "wall_loss_weight": 1.0,
   "path_continuity_loss_weight": 1.0,
+  "off_path_loss_weight": 3.0,
   "training_seed": 612,
   "evaluation_seed": 613,
   "retry_count": 0,

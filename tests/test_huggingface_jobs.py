@@ -38,6 +38,7 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
                 "mask_dice_loss_weight": 0.75,
                 "wall_loss_weight": 2.5,
                 "path_continuity_loss_weight": 1.25,
+                "off_path_loss_weight": 3.5,
                 "training_seed": 123,
                 "evaluation_seed": 456,
                 "retry_count": 3,
@@ -80,6 +81,7 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
         mask_dice_loss_weight=0.75,
         wall_loss_weight=2.5,
         path_continuity_loss_weight=1.25,
+        off_path_loss_weight=3.5,
         training_seed=123,
         evaluation_seed=456,
         retry_count=3,
@@ -122,6 +124,8 @@ def test_huggingface_job_config_builds_remote_ready_dry_run_command(tmp_path):
     assert "2.5" in command
     assert "--path-continuity-loss-weight" in command
     assert "1.25" in command
+    assert "--off-path-loss-weight" in command
+    assert "3.5" in command
     assert "--maze-family" in command
     assert "kruskal" in command
     assert "--output-repo" in command
@@ -261,6 +265,8 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
             "2.5",
             "--path-continuity-loss-weight",
             "1.25",
+            "--off-path-loss-weight",
+            "3.5",
             "--training-seed",
             "7",
             "--evaluation-seed",
@@ -298,6 +304,7 @@ def test_huggingface_job_script_runs_tiny_build_train_evaluate_workflow(
     assert summary["mask_dice_loss_weight"] == 0.75
     assert summary["wall_loss_weight"] == 2.5
     assert summary["path_continuity_loss_weight"] == 1.25
+    assert summary["off_path_loss_weight"] == 3.5
 
 
 def _requires_diffusers_runtime() -> None:
