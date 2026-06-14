@@ -1,8 +1,11 @@
 import json
 import importlib.util
 import sys
+from pathlib import Path
 
 import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from dreamaze.huggingface_jobs import (
     BEST_GPU_HARDWARE_FLAVOR,
@@ -188,6 +191,37 @@ def test_huggingface_job_config_can_select_larger_gpu_profile(tmp_path):
     assert "larger" in command
     assert "--model-output-repo" in command
     assert "Srini410/dreamaze-solver" in command
+
+
+def test_checked_in_larger_gpu_job_config_includes_structure_losses():
+    config_path = _REPO_ROOT / "configs" / "hf-job-larger-gpu.json"
+    config = load_huggingface_job_config(config_path)
+    command = build_huggingface_job_command(config)
+
+    assert config.dataset_preset == "larger"
+    assert config.maze_family == "kruskal"
+    assert config.path_continuity_loss_weight == 1.0
+    assert config.off_path_loss_weight == 3.0
+    assert config.wall_loss_weight == 1.0
+    assert config.mask_bce_loss_weight == 1.0
+    assert config.mask_dice_loss_weight == 1.0
+    assert "--path-continuity-loss-weight" in command
+    assert "1.0" in command
+    assert "--off-path-loss-weight" in command
+    assert "3.0" in command
+
+
+def test_checked_in_tiny_overfit_gpu_job_config_matches_structure_loss_stack():
+    config_path = _REPO_ROOT / "configs" / "hf-job-tiny-overfit-gpu.json"
+    config = load_huggingface_job_config(config_path)
+
+    assert config.dataset_preset == "tiny"
+    assert config.maze_family == "kruskal"
+    assert config.path_continuity_loss_weight == 1.0
+    assert config.off_path_loss_weight == 3.0
+    assert config.wall_loss_weight == 1.0
+    assert config.mask_bce_loss_weight == 1.0
+    assert config.mask_dice_loss_weight == 1.0
 
 
 def test_huggingface_job_cli_dry_run_prints_command_without_launching(tmp_path, capsys):
