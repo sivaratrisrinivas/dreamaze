@@ -253,6 +253,16 @@ def test_space_app_stream_endpoint_returns_event_stream(monkeypatch, tmp_path):
     assert response.media_type == "text/event-stream"
 
 
+def test_space_app_reads_sampling_steps_from_env(monkeypatch, tmp_path):
+    checkpoint_dir = tmp_path / "checkpoint-step-000001"
+    checkpoint_dir.mkdir()
+    monkeypatch.setenv("DREAMAZE_CHECKPOINT_PATH", str(checkpoint_dir))
+    monkeypatch.setenv("DREAMAZE_SAMPLING_STEPS", "8")
+    module = _load_space_app("dreamaze_space_sampling_steps")
+
+    assert module._resolve_sampling_steps() == 8
+
+
 def test_space_app_stream_events_are_sse_encoded(monkeypatch, tmp_path):
     checkpoint_dir = tmp_path / "checkpoint-step-000001"
     checkpoint_dir.mkdir()

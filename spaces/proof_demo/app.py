@@ -32,6 +32,7 @@ _CHECKPOINT_REVISION = os.environ.get("DREAMAZE_CHECKPOINT_REVISION")
 _ALLOW_SMOKE_MODE = os.environ.get("DREAMAZE_ALLOW_SMOKE_MODE") == "1"
 _REQUESTED_DEVICE = os.environ.get("DREAMAZE_DEVICE", "auto")
 _REQUESTED_PRECISION = os.environ.get("DREAMAZE_PRECISION", "auto")
+_SAMPLING_STEPS = int(os.environ.get("DREAMAZE_SAMPLING_STEPS", "32"))
 
 
 _CHECKPOINT_PATH_CACHE: Path | None = None
@@ -108,6 +109,12 @@ def _resolve_solver_runtime() -> tuple[str, str]:
     return device, precision
 
 
+def _resolve_sampling_steps() -> int:
+    if _SAMPLING_STEPS < 1:
+        raise RuntimeError("DREAMAZE_SAMPLING_STEPS must be positive")
+    return _SAMPLING_STEPS
+
+
 if not (_CHECKPOINT_ENV or (_CHECKPOINT_REPO_ID and _CHECKPOINT_REPO_PATH) or _ALLOW_SMOKE_MODE):
     raise RuntimeError(
         "Set DREAMAZE_CHECKPOINT_PATH or DREAMAZE_CHECKPOINT_REPO_ID + "
@@ -143,7 +150,7 @@ def run_automated_demo() -> str:
     rng = random.Random(tseed)
     maze_family = rng.choice([MazeFamily.KRUSKAL, MazeFamily.WILSON])
     maze_seed = rng.randrange(2000, 88000)
-    sampling_steps = 32
+    sampling_steps = _resolve_sampling_steps()
     device, precision = _resolve_solver_runtime()
 
     result = run_proof_demo(
@@ -190,13 +197,14 @@ def stream_automated_demo_events() -> Iterator[dict]:
     maze_family = rng.choice([MazeFamily.KRUSKAL, MazeFamily.WILSON])
     maze_seed = rng.randrange(2000, 88000)
     device, precision = _resolve_solver_runtime()
+    sampling_steps = _resolve_sampling_steps()
 
     yield from iter_proof_demo_stream_events(
         ProofDemoConfig(
             checkpoint_path=checkpoint_path,
             maze_family=maze_family,
             maze_seed=maze_seed,
-            sampling_steps=32,
+            sampling_steps=sampling_steps,
             retry_count=0,
             debug_reveal=False,
             capture_trajectory=False,
