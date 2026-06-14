@@ -32,6 +32,7 @@ class TrainingConfig:
     mask_bce_loss_weight: float = 0.0
     mask_dice_loss_weight: float = 0.0
     wall_loss_weight: float = 0.0
+    path_continuity_loss_weight: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ def train_conditional_diffusion_solver(config: TrainingConfig) -> TrainingResult
             bce_loss_weight=config.mask_bce_loss_weight,
             dice_loss_weight=config.mask_dice_loss_weight,
             wall_loss_weight=config.wall_loss_weight,
+            path_continuity_loss_weight=config.path_continuity_loss_weight,
         )
 
         optimizer.zero_grad(set_to_none=True)
@@ -174,6 +176,7 @@ def load_training_config(path: str | Path) -> TrainingConfig:
         mask_bce_loss_weight=payload.get("mask_bce_loss_weight", 0.0),
         mask_dice_loss_weight=payload.get("mask_dice_loss_weight", 0.0),
         wall_loss_weight=payload.get("wall_loss_weight", 0.0),
+        path_continuity_loss_weight=payload.get("path_continuity_loss_weight", 0.0),
     )
     _validate_training_config(config)
     return config
@@ -332,8 +335,14 @@ def _clean_mask_auxiliary_loss(
     bce_loss_weight: float,
     dice_loss_weight: float,
     wall_loss_weight: float,
+    path_continuity_loss_weight: float,
 ):
-    if bce_loss_weight == 0 and dice_loss_weight == 0 and wall_loss_weight == 0:
+    if (
+        bce_loss_weight == 0
+        and dice_loss_weight == 0
+        and wall_loss_weight == 0
+        and path_continuity_loss_weight == 0
+    ):
         return predicted_noise.new_tensor(0.0)
 
     clean_logits = _predicted_clean_target_from_noise(
@@ -364,6 +373,16 @@ def _clean_mask_auxiliary_loss(
             clean_logits=clean_logits,
             condition=condition,
             clean_labels=clean_labels,
+        )
+    if path_continuity_loss_weight:
+        auxiliary_loss = (
+            auxiliary_loss
+            + path_continuity_loss_weight
+            * _path_continuity_loss(
+                torch=torch,
+                clean_logits=clean_logits,
+                clean_labels=clean_labels,
+            )
         )
     return auxiliary_loss
 
@@ -410,6 +429,32 @@ def _wall_suppression_loss(*, torch, clean_logits, condition, clean_labels):
         reduction="none",
     )
     return (loss * wall_weights).sum() / wall_weights.sum().clamp_min(1.0)
+
+
+def _path_continuity_loss(*, torch, clean_logits, clean_labels):
+    label_cells = clean_labels > 0.0
+    horizontal_edges = label_cells[:, :, :, :-1] & label_cells[:, :, :, 1:]
+    vertical_edges = label_cells[:, :, :-1, :] & label_cells[:, :, 1:, :]
+
+    horizontal_logits = clean_logits[:, :, :, :-1] + clean_logits[:, :, :, 1:]
+    vertical_logits = clean_logits[:, :, :-1, :] + clean_logits[:, :, 1:, :]
+    horizontal_weights = horizontal_edges.to(dtype=clean_logits.dtype)
+    vertical_weights = vertical_edges.to(dtype=clean_logits.dtype)
+    horizontal_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+        horizontal_logits,
+        torch.ones_like(horizontal_logits),
+        reduction="none",
+    )
+    vertical_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+        vertical_logits,
+        torch.ones_like(vertical_logits),
+        reduction="none",
+    )
+    edge_count = horizontal_weights.sum() + vertical_weights.sum()
+    return (
+        (horizontal_loss * horizontal_weights).sum()
+        + (vertical_loss * vertical_weights).sum()
+    ) / edge_count.clamp_min(1.0)
 
 
 def _condition_channels(example: TrainingExampleArrays) -> list[list[list[float]]]:
@@ -473,6 +518,7 @@ def _training_config_payload(config: TrainingConfig) -> Mapping[str, Any]:
         "mask_bce_loss_weight": config.mask_bce_loss_weight,
         "mask_dice_loss_weight": config.mask_dice_loss_weight,
         "wall_loss_weight": config.wall_loss_weight,
+        "path_continuity_loss_weight": config.path_continuity_loss_weight,
     }
 
 
@@ -535,6 +581,8 @@ def _validate_training_config(config: TrainingConfig) -> None:
         raise ValueError("Training mask Dice loss weight cannot be negative")
     if config.wall_loss_weight < 0:
         raise ValueError("Training wall loss weight cannot be negative")
+    if config.path_continuity_loss_weight < 0:
+        raise ValueError("Training path continuity loss weight cannot be negative")
     if config.device not in {"cpu", "cuda"}:
         raise ValueError("Training device must be cpu or cuda")
     if config.precision not in {"float32", "float16", "bfloat16"}:
