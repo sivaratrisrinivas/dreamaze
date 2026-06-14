@@ -363,6 +363,7 @@ def _clean_mask_auxiliary_loss(
             torch=torch,
             clean_logits=clean_logits,
             condition=condition,
+            clean_labels=clean_labels,
         )
     return auxiliary_loss
 
@@ -397,9 +398,11 @@ def _weighted_soft_dice_loss(*, torch, logits, target, weights, smooth: float = 
     return 1.0 - ((2.0 * intersection + smooth) / (total + smooth))
 
 
-def _wall_suppression_loss(*, torch, clean_logits, condition):
+def _wall_suppression_loss(*, torch, clean_logits, condition, clean_labels):
     maze_open = condition[:, :1]
-    wall_weights = (maze_open <= 0.0).to(dtype=clean_logits.dtype)
+    wall_weights = ((maze_open <= 0.0) & (clean_labels <= 0.0)).to(
+        dtype=clean_logits.dtype
+    )
     wall_target = torch.zeros_like(clean_logits)
     loss = torch.nn.functional.binary_cross_entropy_with_logits(
         clean_logits,

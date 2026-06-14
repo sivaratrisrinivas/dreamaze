@@ -230,10 +230,11 @@ def test_weighted_soft_dice_loss_rewards_mask_overlap():
     assert good_loss.item() < bad_loss.item()
 
 
-def test_wall_suppression_loss_penalizes_closed_maze_cells_only():
+def test_wall_suppression_loss_penalizes_closed_unlabeled_maze_cells_only():
     torch = pytest.importorskip("torch", exc_type=ImportError)
 
     clean_logits = torch.tensor([[[[8.0, 8.0, -8.0]]]])
+    clean_labels = torch.tensor([[[[0.0, 1.0, 0.0]]]])
     condition = torch.tensor(
         [
             [
@@ -248,10 +249,11 @@ def test_wall_suppression_loss_penalizes_closed_maze_cells_only():
         torch=torch,
         clean_logits=clean_logits,
         condition=condition,
+        clean_labels=clean_labels,
     )
     expected = torch.nn.functional.binary_cross_entropy_with_logits(
-        torch.tensor([8.0, -8.0]),
-        torch.tensor([0.0, 0.0]),
+        torch.tensor([-8.0]),
+        torch.tensor([0.0]),
     )
 
     assert loss.item() == pytest.approx(expected.item())
