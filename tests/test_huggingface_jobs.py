@@ -199,6 +199,7 @@ def test_checked_in_larger_gpu_job_config_includes_structure_losses():
     command = build_huggingface_job_command(config)
 
     assert config.dataset_preset == "larger"
+    assert config.repo == "Srini410/dreamaze-artifacts"
     assert config.maze_family == "kruskal"
     assert config.path_continuity_loss_weight == 1.0
     assert config.off_path_loss_weight == 3.0

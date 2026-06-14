@@ -1,5 +1,6 @@
 {
   "compute_profile": "larger_gpu",
+  "repo": "Srini410/dreamaze-artifacts",
   "namespace": "Srini410",
   "maze_family": "kruskal",
   "positive_loss_weight": 8.0,
